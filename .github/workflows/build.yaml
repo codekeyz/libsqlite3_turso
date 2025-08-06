@@ -49,7 +49,14 @@ jobs:
           echo "DEBUG_ARTIFACT=$DEBUG_NAME" >> $GITHUB_ENV
           echo "RELEASE_ARTIFACT=$RELEASE_NAME" >> $GITHUB_ENV
           
-      - name: Upload built library as artifact
+      - name: Upload Debug Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.artifact_path }}
+          name: libsqlite3-debug
+          path: ${{ env.DEBUG_ARTIFACT }}
+
+      - name: Upload Release Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libsqlite3-release
+          path: ${{ env.RELEASE_ARTIFACT }}
