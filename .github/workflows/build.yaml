@@ -40,14 +40,8 @@ jobs:
             exit 1
           fi
 
-          DEBUG_NAME=target/debug/libsqlite3-debug.so
-          RELEASE_NAME=target/release/libsqlite3-release.so
-
-          mv "$DEBUG_SO" "$DEBUG_NAME"
-          mv "$RELEASE_SO" "$RELEASE_NAME"
-
-          echo "DEBUG_ARTIFACT=$DEBUG_NAME" >> $GITHUB_ENV
-          echo "RELEASE_ARTIFACT=$RELEASE_NAME" >> $GITHUB_ENV
+          echo "DEBUG_ARTIFACT=$DEBUG_SO" >> $GITHUB_ENV
+          echo "RELEASE_ARTIFACT=$RELEASE_SO" >> $GITHUB_ENV
           
       - name: Upload Debug Artifact
         uses: actions/upload-artifact@v4
