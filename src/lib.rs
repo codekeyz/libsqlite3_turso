@@ -13,11 +13,14 @@ use sqlite::{
     SQLITE_DONE, SQLITE_ERROR, SQLITE_FLOAT, SQLITE_INTEGER, SQLITE_MISUSE, SQLITE_NULL, SQLITE_OK,
     SQLITE_RANGE, SQLITE_TEXT,
 };
-use utils::{execute_async_task, read_turso_config};
+use utils::execute_async_task;
 
-use crate::utils::{
-    count_parameters, extract_column_names, sql_is_begin_transaction, sql_is_commit, sql_is_pragma,
-    sql_is_rollback, TursoConfig,
+use crate::{
+    proxy::get_turso_db,
+    utils::{
+        count_parameters, extract_column_names, get_tokio, sql_is_begin_transaction, sql_is_commit,
+        sql_is_pragma, sql_is_rollback,
+    },
 };
 
 mod proxy;
@@ -63,18 +66,17 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         exit(1);
     }
 
-    let turso_config = read_turso_config().unwrap_or_else(|_| TursoConfig {
-        db_url: format!(
-            "https://{}.aws-us-west-2.turso.io",
-            filename
-        ),
-        db_token: String::from("eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJnaWQiOiIyMzBiZDc4Ni1iN2I3LTRlYjgtYjkyMy00ZjM5MDRjYTVkMzciLCJpYXQiOjE3NTEwNTc3MzYsInJpZCI6ImQ1N2NjZTQzLWVhNWItNDFmMy1hNWZlLTE2ZWI4MjIxZTkwOCJ9.ItDyuzwvUqeXwc6KsQkjf6dUVAoQ5BkhvlxFD7nDRCl6thxopIKckJ-w7boX-2ms_-jjgVQuhj9PqYAsaycFAg"),
-    });
-
     let reqwest_client = reqwest::Client::builder()
         .user_agent("libsqlite3_turso/1.0.0")
         .build()
         .unwrap();
+
+    let turso_config = get_tokio()
+        .block_on(get_turso_db(&reqwest_client, filename))
+        .unwrap_or_else(|err| {
+            eprintln!("LibSqlite3_Turso Error: {}", err);
+            exit(1);
+        });
 
     let mock_db = Box::into_raw(Box::new(SQLite3 {
         client: reqwest_client,
@@ -86,10 +88,6 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         update_hook: Mutex::new(None),
         turso_config: turso_config,
     }));
-
-    if let Ok(config) = read_turso_config() {
-        (*mock_db).turso_config = config;
-    }
 
     *db = mock_db;
 
