@@ -27,21 +27,24 @@ jobs:
         id: find_artifact
         shell: bash
         run: |
-          echo "Looking for debug and release .so files..."
+          DEBUG_SO=target/debug/libsqlite3.so
+          RELEASE_SO=target/release/libsqlite3.so
 
-          DEBUG_SO=$(find target/debug -type f -name "*.so" | head -n1)
-          RELEASE_SO=$(find target/release -type f -name "*.so" | head -n1)
-
-          if [[ -z "$DEBUG_SO" || -z "$RELEASE_SO" ]]; then
-            echo "Error: Could not find both debug and release .so files."
+          if [[ ! -f "$DEBUG_SO" ]]; then
+            echo "Debug shared library not found at $DEBUG_SO"
             exit 1
           fi
 
-          DEBUG_NAME="$(basename "${DEBUG_SO%.*}")-debug.so"
-          RELEASE_NAME="$(basename "${RELEASE_SO%.*}")-release.so"
+          if [[ ! -f "$RELEASE_SO" ]]; then
+            echo "Release shared library not found at $RELEASE_SO"
+            exit 1
+          fi
 
-          cp "$DEBUG_SO" "$DEBUG_NAME"
-          cp "$RELEASE_SO" "$RELEASE_NAME"
+          DEBUG_NAME=target/debug/libsqlite3-debug.so
+          RELEASE_NAME=target/release/libsqlite3-release.so
+
+          mv "$DEBUG_SO" "$DEBUG_NAME"
+          mv "$RELEASE_SO" "$RELEASE_NAME"
 
           echo "DEBUG_ARTIFACT=$DEBUG_NAME" >> $GITHUB_ENV
           echo "RELEASE_ARTIFACT=$RELEASE_NAME" >> $GITHUB_ENV
