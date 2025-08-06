@@ -26,7 +26,6 @@ pub const SQLITE_FLOAT: c_int = 2;
 pub const SQLITE_TEXT: c_int = 3;
 pub const SQLITE_NULL: c_int = 5;
 
-pub const SQLITE_MEMORY_STORE: &str = ":memory:";
 pub const SQLITE_UPDATE: c_int = 23;
 pub const SQLITE_INSERT: c_int = 18;
 pub const SQLITE_DELETE: c_int = 9;

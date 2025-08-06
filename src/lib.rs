@@ -3,14 +3,15 @@ use std::{
     collections::HashMap,
     ffi::{c_int, c_uint, c_void, CStr, CString},
     os::raw::c_char,
+    process::exit,
     slice,
     sync::Mutex,
 };
 
 use sqlite::{
     push_error, reset_txn_on_db, ExecutionState, SQLite3, SQLite3PreparedStmt, Value, SQLITE_BUSY,
-    SQLITE_DONE, SQLITE_ERROR, SQLITE_FLOAT, SQLITE_INTEGER, SQLITE_MEMORY_STORE, SQLITE_MISUSE,
-    SQLITE_NULL, SQLITE_OK, SQLITE_RANGE, SQLITE_TEXT,
+    SQLITE_DONE, SQLITE_ERROR, SQLITE_FLOAT, SQLITE_INTEGER, SQLITE_MISUSE, SQLITE_NULL, SQLITE_OK,
+    SQLITE_RANGE, SQLITE_TEXT,
 };
 use utils::{execute_async_task, read_turso_config};
 
@@ -56,11 +57,17 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         return SQLITE_ERROR;
     }
 
+    let filename = CStr::from_ptr(filename).to_str().unwrap();
+    if filename.contains(":memory") {
+        eprintln!("LibSqlite3_Turso Error: Memory store is not supported at runtime");
+        exit(1);
+    }
+
     let turso_config = read_turso_config().unwrap_or_else(|_| TursoConfig {
         db_url: format!(
-        "https://{}.aws-us-west-2.turso.io",
-        CStr::from_ptr(filename).to_str().unwrap()
-    ),
+            "https://{}.aws-us-west-2.turso.io",
+            filename
+        ),
         db_token: String::from("eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJnaWQiOiIyMzBiZDc4Ni1iN2I3LTRlYjgtYjkyMy00ZjM5MDRjYTVkMzciLCJpYXQiOjE3NTEwNTc3MzYsInJpZCI6ImQ1N2NjZTQzLWVhNWItNDFmMy1hNWZlLTE2ZWI4MjIxZTkwOCJ9.ItDyuzwvUqeXwc6KsQkjf6dUVAoQ5BkhvlxFD7nDRCl6thxopIKckJ-w7boX-2ms_-jjgVQuhj9PqYAsaycFAg"),
     });
 
@@ -85,20 +92,6 @@ pub unsafe extern "C" fn sqlite3_open_v2(
     }
 
     *db = mock_db;
-
-    // Parse connection string from filename (should contain D1 credentials)
-    let db_name = { CStr::from_ptr(filename).to_str().unwrap() };
-
-    if db_name == SQLITE_MEMORY_STORE {
-        push_error(
-            mock_db,
-            (
-                format!("{} is not supported at runtime", SQLITE_MEMORY_STORE).into(),
-                SQLITE_ERROR,
-            ),
-        );
-        return SQLITE_ERROR;
-    }
 
     SQLITE_OK
 }
