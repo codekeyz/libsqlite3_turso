@@ -1,19 +1,52 @@
+name: Build LibSqlite_Turso Shared Library
+
 on:
   push:
     branches:
       - main
+    tags:
+      - '*'
   pull_request:
-    branches:
-      - main
 
 jobs:
-  build_and_test:
+  build:
     name: Build LibSqlite_Turso
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
-      - run: cargo build --release --all-features
+      - run: |
+          cargo build
+          cargo build --release --all-features
 
+
+
+      - name: Find built shared library
+        id: find_artifact
+        shell: bash
+        run: |
+          echo "Looking for debug and release .so files..."
+
+          DEBUG_SO=$(find target/debug -type f -name "*.so" | head -n1)
+          RELEASE_SO=$(find target/release -type f -name "*.so" | head -n1)
+
+          if [[ -z "$DEBUG_SO" || -z "$RELEASE_SO" ]]; then
+            echo "Error: Could not find both debug and release .so files."
+            exit 1
+          fi
+
+          DEBUG_NAME="$(basename "${DEBUG_SO%.*}")-debug.so"
+          RELEASE_NAME="$(basename "${RELEASE_SO%.*}")-release.so"
+
+          cp "$DEBUG_SO" "$DEBUG_NAME"
+          cp "$RELEASE_SO" "$RELEASE_NAME"
+
+          echo "DEBUG_ARTIFACT=$DEBUG_NAME" >> $GITHUB_ENV
+          echo "RELEASE_ARTIFACT=$RELEASE_NAME" >> $GITHUB_ENV
+          
+      - name: Upload built library as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifact_path }}
