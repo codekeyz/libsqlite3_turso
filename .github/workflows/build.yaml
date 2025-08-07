@@ -13,6 +13,8 @@ jobs:
     name: Build LibSqlite_Turso
     runs-on: ubuntu-22.04
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
       - uses: jirutka/setup-alpine@v1
         with:
           branch: v3.15
@@ -20,12 +22,8 @@ jobs:
             rust
             cargo
       - run: |
-          echo "WORKDIR: $GITHUB_WORKSPACE"
-          cd "$GITHUB_WORKSPACE"
-          cd ..
           ls -l
         shell: alpine.sh {0}
-        working-directory: ${{ github.workspace }}
         
       - name: Find built shared library
         id: find_artifact
