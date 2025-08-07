@@ -141,58 +141,68 @@ pub struct SQLite3PreparedStmt {
     pub db: *mut SQLite3,                       // Pointer to the associated database
 }
 
-async unsafe fn execute_stmt(
-    stmt: &mut SQLite3PreparedStmt,
-) -> Result<QueryResult, Box<dyn Error>> {
-    let db: &SQLite3 = &*stmt.db;
-    let baton_str = {
-        let baton = db.transaction_baton.lock().unwrap();
-        baton.as_ref().map(|s| s.as_str()).map(|s| s.to_owned())
-    };
-
-    let params = convert_params_to_json(&stmt.params);
-    let response = execute_sql_and_params(db, &stmt.sql, params, baton_str.as_ref()).await?;
-
-    let result = get_execution_result(db, &response)?;
-
-    Ok(result.clone())
+impl SQLite3PreparedStmt {
+    pub fn new(db: *mut SQLite3, sql: &str) -> Self {
+        SQLite3PreparedStmt {
+            sql: sql.to_string(),
+            param_count: 0,
+            params: HashMap::new(),
+            execution_state: Mutex::new(ExecutionState::Prepared),
+            result_rows: Mutex::new(Vec::new()),
+            current_row: Mutex::new(None),
+            column_names: Vec::new(),
+            db,
+        }
+    }
 }
 
-async unsafe fn execute_stmt_and_populate_result_rows(
+pub fn get_latest_error(db: &SQLite3) -> Option<(String, c_int)> {
+    if let Ok(stack) = db.error_stack.lock() {
+        stack.last().cloned()
+    } else {
+        None
+    }
+}
+
+pub fn reset_txn_on_db(db: *mut SQLite3) -> c_int {
+    if db.is_null() {
+        return SQLITE_MISUSE;
+    }
+
+    let db = unsafe { &mut *db };
+
+    if !db.transaction_active() {
+        return SQLITE_OK;
+    }
+
+    db.transaction_baton.lock().unwrap().take();
+
+    SQLITE_OK
+}
+
+pub fn push_error(db: *mut SQLite3, error: (String, c_int)) {
+    if db.is_null() {
+        return;
+    }
+
+    // Safety: Convert the raw pointer to a mutable reference
+    let db = unsafe { &mut *db };
+
+    if let Ok(mut stack) = db.error_stack.lock() {
+        stack.push(error);
+    }
+}
+
+pub async unsafe fn execute_statement(
     stmt: &mut SQLite3PreparedStmt,
 ) -> Result<c_int, Box<dyn Error>> {
-    let response = execute_stmt(stmt).await?;
-    let mut result_rows = stmt.result_rows.lock().unwrap();
-
-    let rows = response.rows;
-    let columns = response.cols;
-    stmt.column_names = columns.iter().map(|col| col.name.clone()).collect();
-
-    *result_rows = rows
-        .iter()
-        .map(|row| {
-            let result = row
-                .iter()
-                .map(|row| match row.r#type.as_str() {
-                    "integer" => match &row.value {
-                        serde_json::Value::String(s) => {
-                            Value::Integer(s.parse::<i64>().unwrap_or(0))
-                        }
-                        serde_json::Value::Number(n) => Value::Integer(n.as_i64().unwrap_or(0)),
-                        _ => Value::Integer(0),
-                    },
-                    "float" => Value::Real(row.value.as_f64().unwrap_or(0.0)),
-                    "text" => Value::Text(row.value.as_str().unwrap_or("").to_string()),
-                    "null" => Value::Null,
-                    _ => Value::Null,
-                })
-                .collect();
-
-            result
-        })
-        .collect();
-
-    Ok(SQLITE_OK)
+    match execute_stmt(stmt).await {
+        Ok(_) => Ok(SQLITE_OK),
+        Err(e) => {
+            push_error(stmt.db, (e.to_string(), SQLITE_ERROR));
+            Err(e)
+        }
+    }
 }
 
 pub async unsafe fn handle_select(stmt: &mut SQLite3PreparedStmt) -> Result<c_int, Box<dyn Error>> {
@@ -253,59 +263,14 @@ pub async unsafe fn handle_select(stmt: &mut SQLite3PreparedStmt) -> Result<c_in
     }
 }
 
-pub async unsafe fn handle_insert(stmt: &mut SQLite3PreparedStmt) -> Result<c_int, Box<dyn Error>> {
-    match execute_stmt(stmt).await {
-        Ok(_) => Ok(SQLITE_OK),
-        Err(e) => Err(e),
-    }
-}
-
-pub fn get_latest_error(db: &SQLite3) -> Option<(String, c_int)> {
-    if let Ok(stack) = db.error_stack.lock() {
-        stack.last().cloned()
-    } else {
-        None
-    }
-}
-
-pub fn reset_txn_on_db(db: *mut SQLite3) -> c_int {
-    if db.is_null() {
-        return SQLITE_MISUSE;
-    }
-
-    let db = unsafe { &mut *db };
-
-    if !db.transaction_active() {
-        return SQLITE_OK;
-    }
-
-    db.transaction_baton.lock().unwrap().take();
-
-    SQLITE_OK
-}
-
-pub fn push_error(db: *mut SQLite3, error: (String, c_int)) {
-    if db.is_null() {
-        return;
-    }
-
-    // Safety: Convert the raw pointer to a mutable reference
-    let db = unsafe { &mut *db };
-
-    if let Ok(mut stack) = db.error_stack.lock() {
-        stack.push(error);
-    }
-}
-
 pub async unsafe fn handle_execute(db: *mut SQLite3, sql: &str) -> Result<c_int, Box<dyn Error>> {
     if db.is_null() {
         return Err("Database pointer is null".into());
     }
 
-    let db = &mut *db;
-    let baton = db.transaction_baton.lock().unwrap();
+    let mut stmt = SQLite3PreparedStmt::new(db, sql);
 
-    match execute_sql_and_params(db, sql, vec![], baton.as_ref()).await {
+    match execute_stmt(&mut stmt).await {
         Ok(_) => Ok(SQLITE_OK),
         Err(e) => Err(e),
     }
@@ -360,6 +325,60 @@ pub async fn commit_tnx_on_db(db: *mut SQLite3) -> Result<c_int, Box<dyn Error>>
     db.transaction_baton.lock().unwrap().take();
 
     reset_txn_on_db(db);
+
+    Ok(SQLITE_OK)
+}
+
+async unsafe fn execute_stmt(
+    stmt: &mut SQLite3PreparedStmt,
+) -> Result<QueryResult, Box<dyn Error>> {
+    let db: &SQLite3 = &*stmt.db;
+    let baton_str = {
+        let baton = db.transaction_baton.lock().unwrap();
+        baton.as_ref().map(|s| s.as_str()).map(|s| s.to_owned())
+    };
+
+    let params = convert_params_to_json(&stmt.params);
+    let response = execute_sql_and_params(db, &stmt.sql, params, baton_str.as_ref()).await?;
+
+    let result = get_execution_result(db, &response)?;
+
+    Ok(result.clone())
+}
+
+async unsafe fn execute_stmt_and_populate_result_rows(
+    stmt: &mut SQLite3PreparedStmt,
+) -> Result<c_int, Box<dyn Error>> {
+    let response = execute_stmt(stmt).await?;
+    let mut result_rows = stmt.result_rows.lock().unwrap();
+
+    let rows = response.rows;
+    let columns = response.cols;
+    stmt.column_names = columns.iter().map(|col| col.name.clone()).collect();
+
+    *result_rows = rows
+        .iter()
+        .map(|row| {
+            let result = row
+                .iter()
+                .map(|row| match row.r#type.as_str() {
+                    "integer" => match &row.value {
+                        serde_json::Value::String(s) => {
+                            Value::Integer(s.parse::<i64>().unwrap_or(0))
+                        }
+                        serde_json::Value::Number(n) => Value::Integer(n.as_i64().unwrap_or(0)),
+                        _ => Value::Integer(0),
+                    },
+                    "float" => Value::Real(row.value.as_f64().unwrap_or(0.0)),
+                    "text" => Value::Text(row.value.as_str().unwrap_or("").to_string()),
+                    "null" => Value::Null,
+                    _ => Value::Null,
+                })
+                .collect();
+
+            result
+        })
+        .collect();
 
     Ok(SQLITE_OK)
 }

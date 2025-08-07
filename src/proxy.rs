@@ -111,8 +111,13 @@ async fn send_sql_request(
     config: &TursoConfig,
     request: serde_json::Value,
 ) -> Result<RemoteSqliteResponse, Box<dyn Error>> {
+    if cfg!(debug_assertions) {
+        println!("Sending SQL Request: {}", request);
+    }
+
     let response: serde_json::Value =
         send_remote_request(client, config, "v2/pipeline", request).await?;
+
     let parsed: RemoteSqliteResponse = serde_json::from_value(response)?;
     Ok(parsed)
 }
@@ -132,14 +137,27 @@ async fn send_remote_request(
         .await?;
 
     let status = response.status();
-    let response_text: String = response.text().await?;
+    let response_text = response.text().await?;
 
-    let parsed_response = serde_json::from_str::<serde_json::Value>(&response_text);
-    if parsed_response.is_err() && !status.is_success() {
+    if cfg!(debug_assertions) {
+        println!("Received Response: {}\n", &response_text);
+    }
+
+    if !status.is_success() {
+        if let Ok(error_body) = serde_json::from_str::<serde_json::Value>(&response_text) {
+            if let Some(error_message) = error_body.get("error").and_then(|e| e.as_str()) {
+                return Err(error_message.into());
+            }
+        }
+        return Err(format!("LibSqlite3_Turso Error: {}", response_text).into());
+    }
+
+    let parsed_response = serde_json::from_str(&response_text);
+    if parsed_response.is_err() {
         return Err(format!("Failed to parse response: {}", parsed_response.unwrap_err()).into());
     }
 
-    let parsed_response = parsed_response.unwrap();
+    let parsed_response: serde_json::Value = parsed_response.unwrap();
     if let Some(results) = parsed_response.get("results").and_then(|r| r.as_array()) {
         for result in results {
             if let Some(error) = result
@@ -150,21 +168,6 @@ async fn send_remote_request(
                 return Err(error.into());
             }
         }
-    }
-
-    // Check if the status code indicates success
-    if !status.is_success() {
-        if let Ok(error_body) = serde_json::from_str::<serde_json::Value>(&response_text) {
-            if let Some(error_message) = error_body.get("error").and_then(|e| e.as_str()) {
-                return Err(error_message.into());
-            }
-        }
-
-        return Err(format!("LibSqlite3_Turso Error: {}", response_text).into());
-    }
-
-    if cfg!(debug_assertions) {
-        println!("SQL Request: {}\nResponse: {}\n", request, parsed_response);
     }
 
     Ok(parsed_response)
@@ -181,12 +184,12 @@ pub fn convert_params_to_json(params: &HashMap<i32, Value>) -> Vec<serde_json::V
         .map(|(_, value)| match value {
             Value::Integer(i) => serde_json::json!({
                 "type": "integer",
-                "value": *i
+                "value": *i.to_string()
             }),
 
             Value::Real(f) => serde_json::json!({
                 "type": "float",
-                "value": *f
+                "value": *f.to_string()
             }),
             Value::Text(s) => serde_json::json!({
                 "type": "text",

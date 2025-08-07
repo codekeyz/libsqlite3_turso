@@ -237,6 +237,22 @@ pub unsafe extern "C" fn sqlite3_bind_int64(
 }
 
 #[no_mangle]
+pub extern "C" fn sqlite3_bind_null(stmt_ptr: *mut SQLite3PreparedStmt, index: c_int) -> c_int {
+    if stmt_ptr.is_null() {
+        return SQLITE_MISUSE;
+    }
+
+    let stmt = unsafe { &mut *stmt_ptr };
+
+    if index <= 0 || index > stmt.param_count {
+        return SQLITE_RANGE;
+    }
+
+    stmt.params.insert(index, Value::Null);
+    SQLITE_OK
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sqlite3_step(stmt_ptr: *mut SQLite3PreparedStmt) -> c_int {
     if stmt_ptr.is_null() {
         return SQLITE_MISUSE;
@@ -246,7 +262,7 @@ pub unsafe extern "C" fn sqlite3_step(stmt_ptr: *mut SQLite3PreparedStmt) -> c_i
 
     let mut exec_state = match stmt.execution_state.lock() {
         Ok(guard) => guard,
-        Err(_) => return SQLITE_ERROR, // Lock poisoned
+        Err(_) => return SQLITE_ERROR,
     };
 
     match *exec_state {
@@ -261,9 +277,7 @@ pub unsafe extern "C" fn sqlite3_step(stmt_ptr: *mut SQLite3PreparedStmt) -> c_i
     drop(exec_state);
 
     let sql = stmt.sql.to_uppercase();
-    if sql.starts_with("INSERT") {
-        return execute_async_task(stmt.db, sqlite::handle_insert(stmt));
-    } else if sql.starts_with("SELECT") {
+    if sql.starts_with("SELECT") {
         return execute_async_task(stmt.db, sqlite::handle_select(stmt));
     } else if sql_is_begin_transaction(&sql) {
         return execute_async_task(stmt.db, sqlite::begin_tnx_on_db(stmt.db));
@@ -271,7 +285,7 @@ pub unsafe extern "C" fn sqlite3_step(stmt_ptr: *mut SQLite3PreparedStmt) -> c_i
         return execute_async_task(stmt.db, sqlite::commit_tnx_on_db(stmt.db));
     }
 
-    SQLITE_ERROR
+    execute_async_task(stmt.db, sqlite::execute_statement(stmt))
 }
 
 #[no_mangle]
@@ -363,18 +377,18 @@ pub extern "C" fn sqlite3_extended_errcode(db: *mut SQLite3) -> c_int {
 #[no_mangle]
 pub extern "C" fn sqlite3_errmsg(db: *mut SQLite3) -> *const c_char {
     if db.is_null() {
-        return std::ptr::null();
+        return b"Invalid DB pointer\0".as_ptr() as *const c_char;
     }
 
     let db = unsafe { &mut *db };
 
     if let Some(error_entry) = sqlite::get_latest_error(db) {
         match CString::new(error_entry.0) {
-            Ok(c_string) => c_string.into_raw(),
+            Ok(c_string) => c_string.as_ptr(),
             Err(_) => std::ptr::null(),
         }
     } else {
-        std::ptr::null()
+        b"No error\0".as_ptr() as *const c_char
     }
 }
 
@@ -594,14 +608,14 @@ pub unsafe extern "C" fn sqlite3_exec(
     if sql_is_pragma(&sql) {
         return SQLITE_OK;
     } else if sql_is_begin_transaction(&sql) {
-        execute_async_task(db, sqlite::begin_tnx_on_db(db))
+        return execute_async_task(db, sqlite::begin_tnx_on_db(db));
     } else if sql_is_rollback(&sql) {
-        reset_txn_on_db(db)
+        return reset_txn_on_db(db);
     } else if sql_is_commit(&sql) {
-        execute_async_task(db, sqlite::commit_tnx_on_db(db))
-    } else {
-        execute_async_task(db, sqlite::handle_execute(db, &sql))
+        return execute_async_task(db, sqlite::commit_tnx_on_db(db));
     }
+
+    execute_async_task(db, sqlite::handle_execute(db, &sql))
 }
 
 #[no_mangle]
