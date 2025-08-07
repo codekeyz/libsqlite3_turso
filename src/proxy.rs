@@ -124,7 +124,7 @@ async fn send_remote_request(
     request: serde_json::Value,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
     let response = client
-        .post(format!("{}/{}", turso_config.db_url, path))
+        .post(format!("https://{}/{}", turso_config.db_url, path))
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", turso_config.db_token))
         .json(&request)
@@ -239,14 +239,14 @@ pub async fn get_turso_db(client: &Client, db_name: &str) -> Result<TursoConfig,
         .post(format!("{}/db/auth", globe_auth_api))
         .body(request_body.to_string())
         .send()
-        .await?;
+        .await
+        .map_err(|_| "Failed to fetch auth credentials for database")?;
 
     if !response.status().is_success() {
         return Err(format!("Failed to get Auth Token: {}", response.status()).into());
     }
 
-    let token: String = response.text().await?;
-    let db_info = serde_json::from_str(&token)?;
-
+    let json = response.json().await?;
+    let db_info = serde_json::from_value(json)?;
     Ok(db_info)
 }

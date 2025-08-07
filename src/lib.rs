@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     ffi::{c_int, c_uint, c_void, CStr, CString},
     os::raw::c_char,
-    process::exit,
     slice,
     sync::Mutex,
 };
@@ -63,7 +62,7 @@ pub unsafe extern "C" fn sqlite3_open_v2(
     let filename = CStr::from_ptr(filename).to_str().unwrap();
     if filename.contains(":memory") {
         eprintln!("LibSqlite3_Turso Error: Memory store is not supported at runtime");
-        exit(1);
+        return SQLITE_MISUSE;
     }
 
     let reqwest_client = reqwest::Client::builder()
@@ -71,12 +70,12 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         .build()
         .unwrap();
 
-    let turso_config = get_tokio()
-        .block_on(get_turso_db(&reqwest_client, filename))
-        .unwrap_or_else(|err| {
-            eprintln!("LibSqlite3_Turso Error: {}", err);
-            exit(1);
-        });
+    // get turso config or return SQLITE_ERROR
+    let turso_config = get_tokio().block_on(get_turso_db(&reqwest_client, filename));
+    if turso_config.is_err() {
+        eprintln!("LibSqlite3_Turso Error: {}", turso_config.unwrap_err());
+        return SQLITE_ERROR;
+    }
 
     let mock_db = Box::into_raw(Box::new(SQLite3 {
         client: reqwest_client,
@@ -86,7 +85,7 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         delete_hook: Mutex::new(None),
         insert_hook: Mutex::new(None),
         update_hook: Mutex::new(None),
-        turso_config: turso_config,
+        turso_config: turso_config.unwrap(),
     }));
 
     *db = mock_db;
