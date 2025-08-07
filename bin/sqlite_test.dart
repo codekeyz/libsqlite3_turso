@@ -21,7 +21,7 @@ void main() {
     // "INSERT INTO users (name, email) VALUES ('Alice', 'alice@gmail.com')",
   ];
 
-  final db = sqlite3.open('test-database-chima');
+  final db = sqlite3.open('untrue-necklace');
   for (final command in commmands) db.execute(command);
 
   // fetch data

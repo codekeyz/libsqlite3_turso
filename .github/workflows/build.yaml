@@ -13,16 +13,28 @@ jobs:
     name: Build LibSqlite_Turso
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - uses: jirutka/setup-alpine@v1
         with:
-          toolchain: stable
+          arch: x86_64
+          packages: >
+            openssl-dev
+            build-base
+            pkgconf
+            lld
+            rustup
+
+      - name: Install Rust stable toolchain via rustup
+        run: rustup-init --default-toolchain nightly --profile minimal -y
+        shell: alpine.sh {0}
+
       - run: |
+          export RUSTFLAGS="-C target-feature=-crt-static"
           cargo build
-          cargo build --release --all-features
-
-
-
+          cargo build --release
+        shell: alpine.sh {0}
+        
       - name: Find built shared library
         id: find_artifact
         shell: bash

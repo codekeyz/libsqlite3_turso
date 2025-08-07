@@ -1,6 +1,7 @@
-use std::{env, ffi::c_int, sync::OnceLock};
+use std::{ffi::c_int, sync::OnceLock};
 
 use regex::Regex;
+use serde::Deserialize;
 use tokio::runtime::{self, Runtime};
 
 use crate::sqlite::{push_error, SQLite3, SQLITE_ERROR};
@@ -66,19 +67,10 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct TursoConfig {
     pub db_url: String,
     pub db_token: String,
-}
-
-pub fn read_turso_config() -> Result<TursoConfig, String> {
-    let db_url = env::var("TURSO_DB_URL")
-        .map_err(|_| "Missing environment variable: TURSO_DB_URL".to_string())?;
-    let db_token = env::var("TURSO_DB_TOKEN")
-        .map_err(|_| "Missing environment variable: TURSO_DB_TOKEN".to_string())?;
-
-    Ok(TursoConfig { db_url, db_token })
 }
 
 #[inline]
