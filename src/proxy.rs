@@ -230,26 +230,3 @@ pub fn get_execution_result<'a>(
 
     Ok(first_execution_result)
 }
-
-pub async fn get_turso_db(client: &Client, db_name: &str) -> Result<TursoConfig, Box<dyn Error>> {
-    let globe_auth_api = std::env::var("GLOBE_DS_API")?;
-
-    let request_body = serde_json::json!({
-        "db_name": db_name,
-    });
-
-    let response = client
-        .post(format!("{}/db/auth", globe_auth_api))
-        .body(request_body.to_string())
-        .send()
-        .await
-        .map_err(|_| "Failed to fetch auth credentials for database")?;
-
-    if !response.status().is_success() {
-        return Err(format!("Failed to get Auth Token: {}", response.status()).into());
-    }
-
-    let json = response.json().await?;
-    let db_info = serde_json::from_value(json)?;
-    Ok(db_info)
-}

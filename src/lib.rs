@@ -15,13 +15,14 @@ use sqlite::{
 use utils::execute_async_task;
 
 use crate::{
-    proxy::get_turso_db,
+    auth::{DbAuthStrategy, GlobeStrategy},
     utils::{
         count_parameters, extract_column_names, get_tokio, sql_is_begin_transaction, sql_is_commit,
         sql_is_pragma, sql_is_rollback,
     },
 };
 
+mod auth;
 mod proxy;
 mod sqlite;
 mod utils;
@@ -70,8 +71,8 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         .build()
         .unwrap();
 
-    // get turso config or return SQLITE_ERROR
-    let turso_config = get_tokio().block_on(get_turso_db(&reqwest_client, filename));
+    let auth_strategy = Box::new(GlobeStrategy);
+    let turso_config = get_tokio().block_on(auth_strategy.resolve(filename, &reqwest_client));
     if turso_config.is_err() {
         eprintln!("LibSqlite3_Turso Error: {}", turso_config.unwrap_err());
         return SQLITE_ERROR;
