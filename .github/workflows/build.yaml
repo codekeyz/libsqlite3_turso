@@ -20,6 +20,8 @@ jobs:
             rust
             cargo
       - run: |
+          echo "WORKDIR: $GITHUB_WORKSPACE"
+          cd "$GITHUB_WORKSPACE"
           ls -l
           cargo build && cargo build --release
         shell: alpine.sh {0}
