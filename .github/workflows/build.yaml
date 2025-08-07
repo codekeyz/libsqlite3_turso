@@ -19,6 +19,9 @@ jobs:
         with:
           arch: x86_64
           packages: >
+            build-base
+            pkgconf
+            lld
             rustup
 
       - name: Install Rust stable toolchain via rustup
