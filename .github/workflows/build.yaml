@@ -17,7 +17,9 @@ jobs:
         uses: actions/checkout@v3
       - uses: jirutka/setup-alpine@v1
         with:
-          branch: v3.15
+          arch: x86_64
+          packages: >
+            rustup
 
       - name: Install Rust stable toolchain via rustup
         run: rustup-init --default-toolchain stable --profile minimal -y
