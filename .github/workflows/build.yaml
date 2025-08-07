@@ -16,9 +16,12 @@ jobs:
       - uses: jirutka/setup-alpine@v1
         with:
           branch: v3.15
-      - run: apk add rust cargo
-        shell: alpine.sh --root {0}
-      - run: cargo build && cargo build --release
+          packages: >
+            rust
+            cargo
+      - run: |
+          ls -l
+          cargo build && cargo build --release
         shell: alpine.sh {0}
         
       - name: Find built shared library
