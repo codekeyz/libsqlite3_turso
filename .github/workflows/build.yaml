@@ -28,7 +28,7 @@ jobs:
         run: rustup-init --default-toolchain stable --profile minimal -y
         shell: alpine.sh {0}
 
-      - run: cargo build && cargo build --release
+      - run: cargo build -C target-feature=-crt-static && cargo build --release -C target-feature=-crt-static
         shell: alpine.sh {0}
         
       - name: Find built shared library
