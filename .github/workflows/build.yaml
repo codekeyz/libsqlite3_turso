@@ -19,6 +19,7 @@ jobs:
         with:
           arch: x86_64
           packages: >
+            openssl-dev
             build-base
             pkgconf
             lld
