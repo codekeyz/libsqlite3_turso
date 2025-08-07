@@ -18,9 +18,11 @@ jobs:
       - uses: jirutka/setup-alpine@v1
         with:
           branch: v3.15
-          packages: >
-            rust
-            cargo
+
+      - name: Install Rust stable toolchain via rustup
+        run: rustup-init --default-toolchain stable --profile minimal -y
+        shell: alpine.sh {0}
+
       - run: cargo build && cargo build --release
         shell: alpine.sh {0}
         
