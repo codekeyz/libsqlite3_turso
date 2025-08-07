@@ -21,8 +21,7 @@ jobs:
           packages: >
             rust
             cargo
-      - run: |
-          ls -l
+      - run: cargo build && cargo build --release
         shell: alpine.sh {0}
         
       - name: Find built shared library
