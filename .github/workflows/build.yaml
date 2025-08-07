@@ -28,7 +28,7 @@ jobs:
         run: rustup-init --default-toolchain nightly --profile minimal -y
         shell: alpine.sh {0}
 
-      - run: cargo build
+      - run: RUSTFLAGS="-C target-feature=-crt-static" cargo build
         shell: alpine.sh {0}
         
       - name: Find built shared library
