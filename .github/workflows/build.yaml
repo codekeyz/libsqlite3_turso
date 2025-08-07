@@ -25,10 +25,10 @@ jobs:
             rustup
 
       - name: Install Rust stable toolchain via rustup
-        run: rustup-init --default-toolchain stable --profile minimal -y
+        run: rustup-init --default-toolchain nightly --profile minimal -y
         shell: alpine.sh {0}
 
-      - run: RUSTFLAGS="-Ctarget-feature=+crt-static" cargo build --target=x86_64-unknown-linux-gnu
+      - run: RUSTFLAGS="-Ctarget-feature=+crt-static" cargo build && cargo build --release
         shell: alpine.sh {0}
         
       - name: Find built shared library
