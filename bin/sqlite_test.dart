@@ -1,7 +1,14 @@
 import 'dart:io';
 
-import 'package:sqlite3/sqlite3.dart';
+import 'package:sqlite_async/sqlite_async.dart';
 import 'package:path/path.dart' as path;
+
+final migrations = SqliteMigrations()
+  ..add(SqliteMigration(1, (tx) async {
+    await tx.execute(
+      'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)',
+    );
+  }));
 
 // ignore: public_member_api_docs
 void copyBinaryIfNecessary() {
@@ -13,24 +20,31 @@ void copyBinaryIfNecessary() {
   customBinary.copySync(systemBinary.path);
 }
 
-void main() {
+void main() async {
   copyBinaryIfNecessary();
+  final db = SqliteDatabase(path: 'simple-nubian');
 
-  const commmands = [
-    'CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)',
-    // "INSERT INTO users (name, email) VALUES ('Alice', 'alice@gmail.com')",
-  ];
+  await migrations.migrate(db);
 
-  final db = sqlite3.open('untrue-necklace');
-  for (final command in commmands) db.execute(command);
+  // // Use execute() or executeBatch() for INSERT/UPDATE/DELETE statements
+  // await db.executeBatch('INSERT INTO users(name, email) values(?, ?)', [
+  //   ['Amen', 'oxy@gmail.com'],
+  //   ['Moron', 'moron@gmail.com']
+  // ]);
 
-  // fetch data
-  final result = db.select("SELECT * FROM users");
-  for (final row in result) {
-    stdout.writeln(
-      'Artist[id: ${row['id']}, name: ${row['name']}, email: ${row['email']}]',
-    );
-  }
+  // var results = await db.getAll('SELECT * FROM users');
+  // print('Results: $results');
 
-  db.dispose();
+  // await db.writeTransaction((tx) async {
+  //   await tx.execute(
+  //     'INSERT INTO users(name, email) values(?, ?)',
+  //     ['Test3', 'test3@example.com'],
+  //   );
+  //   await tx.execute(
+  //     'INSERT INTO users(name, email) values(?, ?)',
+  //     ['Test4', 'test4@example.com'],
+  //   );
+  // });
+
+  // await db.close();
 }
