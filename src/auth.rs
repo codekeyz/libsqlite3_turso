@@ -31,8 +31,18 @@ impl DbAuthStrategy for GlobeStrategy {
                 .await
                 .map_err(|_| "Failed to fetch auth credentials for database")?;
 
-            if !response.status().is_success() {
-                return Err(format!("Failed to get Auth Token: {}", response.status()).into());
+            let status_code = response.status();
+            if !status_code.is_success() {
+                let error_message = response.text().await?;
+                if cfg!(debug_assertions) {
+                    eprintln!("Error: {}", error_message);
+                }
+
+                return Err(format!(
+                    "Failed to authenticate database. Http Status Code: {}",
+                    status_code,
+                )
+                .into());
             }
 
             let json = response.json().await?;

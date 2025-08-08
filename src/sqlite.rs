@@ -20,6 +20,7 @@ pub const SQLITE_ROW: c_int = 100;
 pub const SQLITE_DONE: c_int = 101;
 pub const SQLITE_RANGE: c_int = 25;
 pub const SQLITE_BUSY: c_int = 5;
+pub const SQLITE_CANTOPEN: c_int = 14;
 
 pub const SQLITE_INTEGER: c_int = 1;
 pub const SQLITE_FLOAT: c_int = 2;

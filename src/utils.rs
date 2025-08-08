@@ -92,3 +92,8 @@ pub fn sql_is_rollback(sql: &String) -> bool {
 pub fn sql_is_commit(sql: &String) -> bool {
     sql.starts_with("COMMIT")
 }
+
+#[inline]
+pub fn is_aligned<T>(ptr: *const T) -> bool {
+    !ptr.is_null() && (ptr as usize) % std::mem::align_of::<T>() == 0
+}

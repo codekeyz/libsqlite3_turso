@@ -9,16 +9,16 @@ use std::{
 
 use sqlite::{
     push_error, reset_txn_on_db, ExecutionState, SQLite3, SQLite3PreparedStmt, Value, SQLITE_BUSY,
-    SQLITE_DONE, SQLITE_ERROR, SQLITE_FLOAT, SQLITE_INTEGER, SQLITE_MISUSE, SQLITE_NULL, SQLITE_OK,
-    SQLITE_RANGE, SQLITE_TEXT,
+    SQLITE_CANTOPEN, SQLITE_DONE, SQLITE_ERROR, SQLITE_FLOAT, SQLITE_INTEGER, SQLITE_MISUSE,
+    SQLITE_NULL, SQLITE_OK, SQLITE_RANGE, SQLITE_TEXT,
 };
 use utils::execute_async_task;
 
 use crate::{
     auth::{DbAuthStrategy, GlobeStrategy},
     utils::{
-        count_parameters, extract_column_names, get_tokio, sql_is_begin_transaction, sql_is_commit,
-        sql_is_pragma, sql_is_rollback,
+        count_parameters, extract_column_names, get_tokio, is_aligned, sql_is_begin_transaction,
+        sql_is_commit, sql_is_pragma, sql_is_rollback,
     },
 };
 
@@ -62,8 +62,7 @@ pub unsafe extern "C" fn sqlite3_open_v2(
 
     let filename = CStr::from_ptr(filename).to_str().unwrap();
     if filename.contains(":memory") {
-        eprintln!("LibSqlite3_Turso Error: Memory store is not supported at runtime");
-        return SQLITE_MISUSE;
+        return SQLITE_CANTOPEN;
     }
 
     let reqwest_client = reqwest::Client::builder()
@@ -74,8 +73,7 @@ pub unsafe extern "C" fn sqlite3_open_v2(
     let auth_strategy = Box::new(GlobeStrategy);
     let turso_config = get_tokio().block_on(auth_strategy.resolve(filename, &reqwest_client));
     if turso_config.is_err() {
-        eprintln!("LibSqlite3_Turso Error: {}", turso_config.unwrap_err());
-        return SQLITE_ERROR;
+        return SQLITE_CANTOPEN;
     }
 
     let mock_db = Box::into_raw(Box::new(SQLite3 {
@@ -96,8 +94,8 @@ pub unsafe extern "C" fn sqlite3_open_v2(
 
 #[no_mangle]
 pub extern "C" fn sqlite3_extended_result_codes(db: *mut SQLite3, _onoff: i32) -> i32 {
-    if db.is_null() {
-        return SQLITE_MISUSE;
+    if !is_aligned(db) {
+        return SQLITE_CANTOPEN;
     }
 
     SQLITE_OK
@@ -341,12 +339,12 @@ pub extern "C" fn sqlite3_reset(stmt: *mut SQLite3PreparedStmt) -> c_int {
 
     stmt.column_names.clear();
 
-    SQLITE_OK // Indicate successful reset
+    SQLITE_OK
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn sqlite3_close_v2(db: *mut SQLite3) -> c_int {
-    if db.is_null() {
+    if !is_aligned(db) {
         return SQLITE_OK;
     }
 
@@ -361,8 +359,8 @@ pub unsafe extern "C" fn sqlite3_close_v2(db: *mut SQLite3) -> c_int {
 
 #[no_mangle]
 pub extern "C" fn sqlite3_extended_errcode(db: *mut SQLite3) -> c_int {
-    if db.is_null() {
-        return SQLITE_OK;
+    if !is_aligned(db) {
+        return SQLITE_CANTOPEN;
     }
 
     let db = unsafe { &mut *db };
@@ -377,8 +375,8 @@ pub extern "C" fn sqlite3_extended_errcode(db: *mut SQLite3) -> c_int {
 
 #[no_mangle]
 pub extern "C" fn sqlite3_errmsg(db: *mut SQLite3) -> *const c_char {
-    if db.is_null() {
-        return b"Invalid DB pointer\0".as_ptr() as *const c_char;
+    if !is_aligned(db) {
+        return b"Invalid Database pointer\0".as_ptr() as *const c_char;
     }
 
     let db = unsafe { &mut *db };
@@ -584,6 +582,7 @@ pub extern "C" fn sqlite3_errstr(errcode: c_int) -> *const c_char {
         SQLITE_MISUSE => "Library used incorrectly",
         SQLITE_RANGE => "2nd parameter to sqlite3_bind out of range",
         SQLITE_BUSY => "The database file is locked",
+        SQLITE_CANTOPEN => "Either database does not exist or cannot be opened",
         _ => "Unknown error code",
     };
 
@@ -598,8 +597,8 @@ pub unsafe extern "C" fn sqlite3_exec(
     _: *mut std::ffi::c_void,
     _: *mut *mut i8,
 ) -> c_int {
-    if db.is_null() || sql.is_null() {
-        return SQLITE_MISUSE;
+    if !is_aligned(db) {
+        return SQLITE_CANTOPEN;
     }
 
     let db = &mut *db;
@@ -625,8 +624,8 @@ pub extern "C" fn sqlite3_update_hook(
     callback: Option<sqlite::SqliteHook>,
     user_data: *mut c_void,
 ) -> c_int {
-    if db.is_null() {
-        return SQLITE_MISUSE;
+    if !is_aligned(db) {
+        return SQLITE_CANTOPEN;
     }
 
     let db = unsafe { &mut *db };
@@ -640,8 +639,8 @@ pub extern "C" fn sqlite3_commit_hook(
     x_callback: Option<unsafe extern "C" fn(*mut c_void) -> c_int>, // int (*xCallback)(void*)
     p_arg: *mut c_void,                                             // void *pArg
 ) -> c_int {
-    if db.is_null() {
-        return SQLITE_MISUSE;
+    if !is_aligned(db) {
+        return SQLITE_CANTOPEN;
     }
 
     SQLITE_OK
@@ -652,17 +651,19 @@ pub extern "C" fn sqlite3_rollback_hook(
     db: *mut SQLite3,
     x_callback: Option<unsafe extern "C" fn(*mut c_void) -> c_int>, // int (*xCallback)(void*)
     p_arg: *mut c_void,                                             // void *pArg
-) {
-    if db.is_null() {
-        return;
+) -> c_int {
+    if !is_aligned(db) {
+        return SQLITE_CANTOPEN;
     }
 
     let db = unsafe { &mut *db }; // Safely dereference the raw pointer
+
+    SQLITE_OK
 }
 
 #[no_mangle]
 pub extern "C" fn sqlite3_get_autocommit(db: *mut SQLite3) -> c_int {
-    if db.is_null() {
+    if !is_aligned(db) {
         return 1;
     }
 
