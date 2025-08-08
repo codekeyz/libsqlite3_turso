@@ -64,6 +64,7 @@ pub struct SQLite3 {
     pub last_insert_rowid: Mutex<Option<i64>>, // Last inserted row ID
     pub error_stack: Mutex<Vec<(String, c_int)>>, // Stack to store error messages
     pub transaction_baton: Mutex<Option<String>>, // Baton for transaction management
+    pub transaction_has_began: Mutex<bool>, // Flag to check if a transaction has started
     pub update_hook: Mutex<Option<(SqliteHook, *mut c_void)>>, // Update hook callback
     pub insert_hook: Mutex<Option<(SqliteHook, *mut c_void)>>, // Insert hook callback
     pub delete_hook: Mutex<Option<(SqliteHook, *mut c_void)>>, // Delete hook callback
@@ -114,8 +115,8 @@ impl SQLite3 {
         SQLITE_OK
     }
 
-    pub fn transaction_active(&self) -> bool {
-        self.transaction_baton.lock().unwrap().is_some()
+    pub fn has_began_transaction(&self) -> bool {
+        *self.transaction_has_began.lock().unwrap()
     }
 }
 
@@ -172,10 +173,11 @@ pub fn reset_txn_on_db(db: *mut SQLite3) -> c_int {
 
     let db = unsafe { &mut *db };
 
-    if !db.transaction_active() {
+    if !db.has_began_transaction() {
         return SQLITE_OK;
     }
 
+    *db.transaction_has_began.lock().unwrap() = false;
     db.transaction_baton.lock().unwrap().take();
 
     SQLITE_OK
@@ -284,7 +286,7 @@ pub async fn begin_tnx_on_db(db: *mut SQLite3) -> Result<c_int, Box<dyn Error>> 
 
     let db = unsafe { &mut *db };
 
-    if db.transaction_active() {
+    if db.has_began_transaction() {
         push_error(
             db,
             (
@@ -297,6 +299,7 @@ pub async fn begin_tnx_on_db(db: *mut SQLite3) -> Result<c_int, Box<dyn Error>> 
 
     let baton_value = get_transaction_baton(&db.client, &db.turso_config).await?;
     db.transaction_baton.lock().unwrap().replace(baton_value);
+    *db.transaction_has_began.lock().unwrap() = true;
 
     Ok(SQLITE_OK)
 }
@@ -308,7 +311,7 @@ pub async fn commit_tnx_on_db(db: *mut SQLite3) -> Result<c_int, Box<dyn Error>>
 
     let db = unsafe { &mut *db };
 
-    if !db.transaction_active() {
+    if !db.has_began_transaction() {
         push_error(
             db,
             (

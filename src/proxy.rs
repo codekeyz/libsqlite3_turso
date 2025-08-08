@@ -1,6 +1,6 @@
 use reqwest::Client;
 use serde::Deserialize;
-use std::{collections::HashMap, error::Error};
+use std::{collections::HashMap, error::Error, time::Duration};
 
 use crate::{
     sqlite::{SQLite3, Value},
@@ -51,12 +51,6 @@ pub async fn execute_sql_and_params(
 ) -> Result<RemoteSqliteResponse, Box<dyn Error>> {
     let mut query_request = serde_json::Map::new();
 
-    if let Some(b) = baton {
-        query_request.insert("baton".to_string(), serde_json::json!(b));
-    }
-
-    let can_keep_open = !(baton.is_some() && sql.contains("COMMIT"));
-
     let mut json_array: Vec<serde_json::Value> = Vec::new();
 
     json_array.push(serde_json::json!({
@@ -67,7 +61,9 @@ pub async fn execute_sql_and_params(
             }
         }));
 
-    if !can_keep_open {
+    if db.has_began_transaction() {
+        query_request.insert("baton".to_string(), serde_json::json!(baton));
+    } else {
         json_array.push(serde_json::json!({
             "type": "close"
         }));
@@ -122,55 +118,107 @@ async fn send_sql_request(
     Ok(parsed)
 }
 
-async fn send_remote_request(
+pub async fn send_remote_request(
     client: &Client,
     turso_config: &TursoConfig,
     path: &str,
     request: serde_json::Value,
 ) -> Result<serde_json::Value, Box<dyn Error>> {
-    let response = client
-        .post(format!("https://{}/{}", turso_config.db_url, path))
-        .header("Content-Type", "application/json")
-        .header("Authorization", format!("Bearer {}", turso_config.db_token))
-        .json(&request)
-        .send()
-        .await?;
+    const MAX_ATTEMPTS: usize = 5;
+    let mut last_error = String::new();
 
-    let status = response.status();
-    let response_text = response.text().await?;
+    for attempt in 1..=MAX_ATTEMPTS {
+        if cfg!(debug_assertions) {
+            println!(
+                "Attempt {}: Sending request to {}",
+                attempt, turso_config.db_url
+            );
+        }
 
-    if cfg!(debug_assertions) {
-        println!("Received Response: {}\n", &response_text);
-    }
+        let resp = client
+            .post(format!("https://{}/{}", turso_config.db_url, path))
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {}", turso_config.db_token))
+            .json(&request)
+            .send()
+            .await;
 
-    if !status.is_success() {
-        if let Ok(error_body) = serde_json::from_str::<serde_json::Value>(&response_text) {
-            if let Some(error_message) = error_body.get("error").and_then(|e| e.as_str()) {
-                return Err(error_message.into());
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                last_error = format!("Request failed: {}", e);
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                } else {
+                    return Err(last_error.into());
+                }
+            }
+        };
+
+        let status = resp.status();
+        let text = match resp.text().await {
+            Ok(t) => t,
+            Err(e) => {
+                last_error = format!("Failed to read response body: {}", e);
+                if attempt < MAX_ATTEMPTS {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                } else {
+                    return Err(last_error.into());
+                }
+            }
+        };
+
+        if cfg!(debug_assertions) {
+            println!("Response received: {}", text);
+        }
+
+        if !status.is_success() {
+            if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(msg) = err_json.get("error").and_then(|v| v.as_str()) {
+                    last_error = format!("API error: {}", msg);
+                } else {
+                    last_error = format!("HTTP error {}: {}", status, text);
+                }
+            } else {
+                last_error = format!("HTTP error {} with invalid JSON: {}", status, text);
+            }
+
+            if attempt < MAX_ATTEMPTS {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            } else {
+                return Err(last_error.into());
             }
         }
-        return Err(format!("LibSqlite3_Turso Error: {}", response_text).into());
-    }
 
-    let parsed_response = serde_json::from_str(&response_text);
-    if parsed_response.is_err() {
-        return Err(format!("Failed to parse response: {}", parsed_response.unwrap_err()).into());
-    }
+        let parsed: serde_json::Value = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => return Err(format!("Failed to parse JSON: {}", e).into()),
+        };
 
-    let parsed_response: serde_json::Value = parsed_response.unwrap();
-    if let Some(results) = parsed_response.get("results").and_then(|r| r.as_array()) {
-        for result in results {
-            if let Some(error) = result
-                .get("error")
-                .and_then(|e| e.get("message"))
-                .and_then(|m| m.as_str())
-            {
-                return Err(error.into());
+        // Check for embedded DB errors
+        if let Some(results) = parsed.get("results").and_then(|r| r.as_array()) {
+            for result in results {
+                if let Some(msg) = result
+                    .get("error")
+                    .and_then(|e| e.get("message"))
+                    .and_then(|m| m.as_str())
+                {
+                    return Err(msg.to_string().into());
+                }
             }
         }
+
+        return Ok(parsed);
     }
 
-    Ok(parsed_response)
+    Err(format!(
+        "Failed to get successful response after {} attempts: {}",
+        MAX_ATTEMPTS, last_error
+    )
+    .into())
 }
 
 pub fn convert_params_to_json(params: &HashMap<i32, Value>) -> Vec<serde_json::Value> {

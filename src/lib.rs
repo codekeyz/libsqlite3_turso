@@ -67,6 +67,7 @@ pub unsafe extern "C" fn sqlite3_open_v2(
 
     let reqwest_client = reqwest::Client::builder()
         .user_agent("libsqlite3_turso/1.0.0")
+        .timeout(std::time::Duration::from_secs(30))
         .build()
         .unwrap();
 
@@ -81,6 +82,7 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         error_stack: Mutex::new(vec![]),
         transaction_baton: Mutex::new(None),
         last_insert_rowid: Mutex::new(None),
+        transaction_has_began: Mutex::new(false),
         delete_hook: Mutex::new(None),
         insert_hook: Mutex::new(None),
         update_hook: Mutex::new(None),
@@ -383,7 +385,7 @@ pub extern "C" fn sqlite3_errmsg(db: *mut SQLite3) -> *const c_char {
 
     if let Some(error_entry) = sqlite::get_latest_error(db) {
         match CString::new(error_entry.0) {
-            Ok(c_string) => c_string.as_ptr(),
+            Ok(c_string) => c_string.into_raw(),
             Err(_) => std::ptr::null(),
         }
     } else {
@@ -669,7 +671,7 @@ pub extern "C" fn sqlite3_get_autocommit(db: *mut SQLite3) -> c_int {
 
     let db = unsafe { &*db };
 
-    if db.transaction_active() {
+    if db.has_began_transaction() {
         0 // Transaction is active
     } else {
         1 // Autocommit mode
