@@ -2,13 +2,13 @@ use std::{
     collections::HashMap,
     error::Error,
     ffi::{c_char, c_int, c_void},
+    fmt,
     sync::Mutex,
 };
 
 use crate::{
     proxy::{
-        convert_params_to_json, execute_sql_and_params, get_execution_result,
-        get_transaction_baton, QueryResult,
+        convert_params_to_json, execute_sql_and_params, get_execution_result, get_transaction_baton,
     },
     utils::TursoConfig,
 };
@@ -34,7 +34,6 @@ pub const SQLITE_DELETE: c_int = 9;
 pub const SQLITE_NO_ACTIVE_TRANSACTION_ERR_MSG: &str = "No transaction is currently active.";
 pub const SQLITE_ALREADY_ACTIVE_TRANSACTION_ERR_MSG: &str = "A transaction is already active.";
 
-// Type alias for the update hook callback
 pub type SqliteHook = extern "C" fn(
     user_data: *mut c_void,  // User-provided data
     op: c_int,               // Operation: INSERT, UPDATE, DELETE
@@ -56,6 +55,27 @@ pub enum Value {
     Integer(i64), // INTEGER
     Real(f64),    // REAL
     Null,         // NULL
+}
+
+#[derive(Debug)]
+pub struct SqliteError {
+    pub message: String,
+    pub code: c_int, //  defaults to SQLITE_ERROR
+}
+
+impl SqliteError {
+    pub fn new(message: impl Into<String>, code: Option<c_int>) -> Self {
+        Self {
+            message: message.into(),
+            code: code.unwrap_or(SQLITE_ERROR),
+        }
+    }
+}
+
+impl fmt::Display for SqliteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "SQLite error (code {}): {}", self.code, self.message)
+    }
 }
 
 #[repr(C)]
@@ -120,7 +140,7 @@ impl SQLite3 {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)] // Traits for debugging and comparison
+#[derive(Debug, PartialEq, Eq)]
 pub enum ExecutionState {
     Prepared,      // Statement is prepared but not yet executed
     Executing,     // Statement is currently executing
@@ -158,6 +178,15 @@ impl SQLite3PreparedStmt {
     }
 }
 
+pub type SQLite3ExecCallback = Option<
+    unsafe extern "C" fn(
+        arg: *mut c_void,
+        column_count: c_int,
+        column_values: *mut *mut c_char,
+        column_names: *mut *mut c_char,
+    ) -> c_int,
+>;
+
 pub fn get_latest_error(db: &SQLite3) -> Option<(String, c_int)> {
     if let Ok(stack) = db.error_stack.lock() {
         stack.last().cloned()
@@ -167,10 +196,6 @@ pub fn get_latest_error(db: &SQLite3) -> Option<(String, c_int)> {
 }
 
 pub fn reset_txn_on_db(db: *mut SQLite3) -> c_int {
-    if db.is_null() {
-        return SQLITE_MISUSE;
-    }
-
     let db = unsafe { &mut *db };
 
     if !db.has_began_transaction() {
@@ -184,11 +209,6 @@ pub fn reset_txn_on_db(db: *mut SQLite3) -> c_int {
 }
 
 pub fn push_error(db: *mut SQLite3, error: (String, c_int)) {
-    if db.is_null() {
-        return;
-    }
-
-    // Safety: Convert the raw pointer to a mutable reference
     let db = unsafe { &mut *db };
 
     if let Ok(mut stack) = db.error_stack.lock() {
@@ -196,34 +216,10 @@ pub fn push_error(db: *mut SQLite3, error: (String, c_int)) {
     }
 }
 
-pub async unsafe fn execute_statement(
-    stmt: &mut SQLite3PreparedStmt,
-) -> Result<c_int, Box<dyn Error>> {
-    match execute_stmt(stmt).await {
-        Ok(_) => Ok(SQLITE_OK),
-        Err(e) => {
-            push_error(stmt.db, (e.to_string(), SQLITE_ERROR));
-            Err(e)
-        }
-    }
-}
-
-pub async unsafe fn handle_select(stmt: &mut SQLite3PreparedStmt) -> Result<c_int, Box<dyn Error>> {
-    let needs_execution = {
-        let result_rows = stmt.result_rows.lock().map_err(|_| "lock error")?;
-        result_rows.is_empty()
-    };
-
-    if needs_execution {
-        if let Err(err) = execute_stmt_and_populate_result_rows(stmt).await {
-            return Err(err);
-        }
-    }
-
+pub fn iterate_rows(stmt: &mut SQLite3PreparedStmt) -> Result<c_int, Box<dyn Error>> {
     let result_rows = stmt.result_rows.lock().unwrap();
     let mut current_row = stmt.current_row.lock().unwrap();
 
-    // Handle row iteration
     match *current_row {
         Some(row_index) if row_index + 1 < result_rows.len() => {
             *current_row = Some(row_index + 1);
@@ -266,11 +262,7 @@ pub async unsafe fn handle_select(stmt: &mut SQLite3PreparedStmt) -> Result<c_in
     }
 }
 
-pub async unsafe fn handle_execute(db: *mut SQLite3, sql: &str) -> Result<c_int, Box<dyn Error>> {
-    if db.is_null() {
-        return Err("Database pointer is null".into());
-    }
-
+pub async fn handle_execute(db: *mut SQLite3, sql: &str) -> Result<c_int, SqliteError> {
     let mut stmt = SQLite3PreparedStmt::new(db, sql);
 
     match execute_stmt(&mut stmt).await {
@@ -279,52 +271,36 @@ pub async unsafe fn handle_execute(db: *mut SQLite3, sql: &str) -> Result<c_int,
     }
 }
 
-pub async fn begin_tnx_on_db(db: *mut SQLite3) -> Result<c_int, Box<dyn Error>> {
-    if db.is_null() {
-        return Err("Database pointer is null".into());
-    }
-
+pub async fn begin_tnx_on_db(db: *mut SQLite3, sql: &str) -> Result<c_int, SqliteError> {
     let db = unsafe { &mut *db };
 
     if db.has_began_transaction() {
-        push_error(
-            db,
-            (
-                SQLITE_ALREADY_ACTIVE_TRANSACTION_ERR_MSG.to_string(),
-                SQLITE_BUSY,
-            ),
-        );
-        return Err("Database is busy".into());
+        return Err(SqliteError::new(
+            SQLITE_ALREADY_ACTIVE_TRANSACTION_ERR_MSG.to_string(),
+            Some(SQLITE_BUSY),
+        ));
     }
 
-    let baton_value = get_transaction_baton(&db.client, &db.turso_config).await?;
+    let baton_value = get_transaction_baton(&db.client, &db.turso_config, &sql).await?;
     db.transaction_baton.lock().unwrap().replace(baton_value);
     *db.transaction_has_began.lock().unwrap() = true;
 
     Ok(SQLITE_OK)
 }
 
-pub async fn commit_tnx_on_db(db: *mut SQLite3) -> Result<c_int, Box<dyn Error>> {
-    if db.is_null() {
-        return Err("Database pointer is null".into());
-    }
-
+pub async fn commit_tnx_on_db(db: *mut SQLite3, sql: &str) -> Result<c_int, SqliteError> {
     let db = unsafe { &mut *db };
 
     if !db.has_began_transaction() {
-        push_error(
-            db,
-            (
-                SQLITE_NO_ACTIVE_TRANSACTION_ERR_MSG.to_string(),
-                SQLITE_ERROR,
-            ),
-        );
-        return Err("No active transaction to commit".into());
+        return Err(SqliteError::new(
+            SQLITE_NO_ACTIVE_TRANSACTION_ERR_MSG,
+            Some(SQLITE_ERROR),
+        ));
     }
 
     let baton = db.transaction_baton.lock().unwrap().clone();
 
-    execute_sql_and_params(db, "COMMIT", vec![], baton.as_ref()).await?;
+    execute_sql_and_params(db, &sql, vec![], baton.as_ref()).await?;
 
     db.transaction_baton.lock().unwrap().take();
 
@@ -333,10 +309,8 @@ pub async fn commit_tnx_on_db(db: *mut SQLite3) -> Result<c_int, Box<dyn Error>>
     Ok(SQLITE_OK)
 }
 
-async unsafe fn execute_stmt(
-    stmt: &mut SQLite3PreparedStmt,
-) -> Result<QueryResult, Box<dyn Error>> {
-    let db: &SQLite3 = &*stmt.db;
+pub async fn execute_stmt(stmt: &mut SQLite3PreparedStmt) -> Result<c_int, SqliteError> {
+    let db: &SQLite3 = unsafe { &*stmt.db };
     let baton_str = {
         let baton = db.transaction_baton.lock().unwrap();
         baton.as_ref().map(|s| s.as_str()).map(|s| s.to_owned())
@@ -344,39 +318,37 @@ async unsafe fn execute_stmt(
 
     let params = convert_params_to_json(&stmt.params);
     let response = execute_sql_and_params(db, &stmt.sql, params, baton_str.as_ref()).await?;
+    let response = get_execution_result(db, &response)?;
 
-    let result = get_execution_result(db, &response)?;
+    stmt.column_names = response.cols.iter().map(|col| col.name.clone()).collect();
 
-    Ok(result.clone())
-}
-
-async unsafe fn execute_stmt_and_populate_result_rows(
-    stmt: &mut SQLite3PreparedStmt,
-) -> Result<c_int, Box<dyn Error>> {
-    let response = execute_stmt(stmt).await?;
     let mut result_rows = stmt.result_rows.lock().unwrap();
-
-    let rows = response.rows;
-    let columns = response.cols;
-    stmt.column_names = columns.iter().map(|col| col.name.clone()).collect();
-
-    *result_rows = rows
+    *result_rows = response
+        .rows
         .iter()
         .map(|row| {
             let result = row
                 .iter()
-                .map(|row| match row.r#type.as_str() {
-                    "integer" => match &row.value {
-                        serde_json::Value::String(s) => {
-                            Value::Integer(s.parse::<i64>().unwrap_or(0))
-                        }
-                        serde_json::Value::Number(n) => Value::Integer(n.as_i64().unwrap_or(0)),
-                        _ => Value::Integer(0),
-                    },
-                    "float" => Value::Real(row.value.as_f64().unwrap_or(0.0)),
-                    "text" => Value::Text(row.value.as_str().unwrap_or("").to_string()),
-                    "null" => Value::Null,
-                    _ => Value::Null,
+                .map(|row| {
+                    if row.value.is_none() {
+                        return Value::Null;
+                    }
+
+                    let value = row.value.as_ref().unwrap();
+
+                    match row.r#type.as_str() {
+                        "integer" => match &value {
+                            serde_json::Value::String(s) => {
+                                Value::Integer(s.parse::<i64>().unwrap_or(0))
+                            }
+                            serde_json::Value::Number(n) => Value::Integer(n.as_i64().unwrap_or(0)),
+                            _ => Value::Integer(0),
+                        },
+                        "float" => Value::Real(value.as_f64().unwrap_or(0.0)),
+                        "text" => Value::Text(value.as_str().unwrap_or("").to_string()),
+                        "null" => Value::Null,
+                        _ => Value::Null,
+                    }
                 })
                 .collect();
 

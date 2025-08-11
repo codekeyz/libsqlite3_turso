@@ -3,7 +3,7 @@ use serde::Deserialize;
 use std::{collections::HashMap, error::Error, time::Duration};
 
 use crate::{
-    sqlite::{SQLite3, Value},
+    sqlite::{SQLite3, SqliteError, Value, SQLITE_ERROR},
     utils::TursoConfig,
 };
 
@@ -22,6 +22,7 @@ pub struct RemoteSQliteResultType {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RemoteSQLiteResult {
     Execute { result: QueryResult },
+    Error { message: String, code: String },
     Close,
 }
 
@@ -33,7 +34,7 @@ pub struct RemoteCol {
 #[derive(Debug, Deserialize, Clone)]
 pub struct RemoteRow {
     pub r#type: String,
-    pub value: serde_json::Value,
+    pub value: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -48,7 +49,7 @@ pub async fn execute_sql_and_params(
     sql: &str,
     params: Vec<serde_json::Value>,
     baton: Option<&String>,
-) -> Result<RemoteSqliteResponse, Box<dyn Error>> {
+) -> Result<RemoteSqliteResponse, SqliteError> {
     let mut query_request = serde_json::Map::new();
 
     let mut json_array: Vec<serde_json::Value> = Vec::new();
@@ -76,28 +77,43 @@ pub async fn execute_sql_and_params(
         &db.turso_config,
         serde_json::Value::from(query_request),
     )
-    .await?;
+    .await;
 
-    Ok(result)
+    if let Err(e) = result {
+        return Err(SqliteError::new(e.to_string(), Some(SQLITE_ERROR)));
+    }
+
+    Ok(result.unwrap())
 }
 
 pub async fn get_transaction_baton(
     client: &Client,
     config: &TursoConfig,
-) -> Result<String, Box<dyn Error>> {
+    sql: &str,
+) -> Result<String, SqliteError> {
     let request = serde_json::json!({
         "requests": [
             {
                 "type": "execute",
                 "stmt": {
-                    "sql": "BEGIN"
+                    "sql": sql
                 }
             }
         ]
     });
 
-    let result = send_sql_request(client, config, request).await?;
-    let baton = result.baton.ok_or("Failed to begin transaction")?;
+    let result = send_sql_request(client, config, request).await;
+    if let Err(e) = result {
+        return Err(SqliteError::new(
+            format!("Failed to get transaction baton: {}", e),
+            Some(SQLITE_ERROR),
+        ));
+    }
+    let result = result.unwrap();
+    let baton = result.baton.ok_or(SqliteError::new(
+        "Failed to get transaction baton",
+        Some(SQLITE_ERROR),
+    ))?;
 
     Ok(baton)
 }
@@ -171,7 +187,7 @@ pub async fn send_remote_request(
         };
 
         if cfg!(debug_assertions) {
-            println!("Response received: {}", text);
+            println!("Response received, status: {} : {}", status, text);
         }
 
         if !status.is_success() {
@@ -254,7 +270,7 @@ pub fn convert_params_to_json(params: &HashMap<i32, Value>) -> Vec<serde_json::V
 pub fn get_execution_result<'a>(
     db: &SQLite3,
     result: &'a RemoteSqliteResponse,
-) -> Result<&'a QueryResult, Box<dyn Error>> {
+) -> Result<&'a QueryResult, SqliteError> {
     let mut baton = db.transaction_baton.lock().unwrap();
 
     if let Some(new_baton) = &result.baton {
@@ -263,12 +279,22 @@ pub fn get_execution_result<'a>(
 
     let first_execution_result = match result.results.get(0) {
         Some(inner) => match &inner.response {
+            RemoteSQLiteResult::Error { message, code } => {
+                return Err(SqliteError::new(
+                    format!("Remote SQLite error (code {}): {}", code, message),
+                    Some(SQLITE_ERROR),
+                ));
+            }
             RemoteSQLiteResult::Execute { result } => Ok(result),
-            RemoteSQLiteResult::Close => Err::<&'a QueryResult, Box<dyn std::error::Error>>(
-                "Unexpected 'close' response".into(),
-            ),
+            RemoteSQLiteResult::Close => Err::<&'a QueryResult, SqliteError>(SqliteError::new(
+                "Remote SQLite closed the connection unexpectedly",
+                None,
+            )),
         },
-        None => Err::<&'a QueryResult, Box<dyn std::error::Error>>("No results returned".into()),
+        None => Err::<&'a QueryResult, SqliteError>(SqliteError::new(
+            "No results returned from remote SQLite",
+            None,
+        )),
     }?;
 
     if let Some(last_insert_rowid) = &first_execution_result.last_insert_rowid {

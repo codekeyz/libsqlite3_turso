@@ -4,13 +4,14 @@ use regex::Regex;
 use serde::Deserialize;
 use tokio::runtime::{self, Runtime};
 
-use crate::sqlite::{push_error, SQLite3, SQLITE_ERROR};
+use crate::sqlite::{push_error, SQLite3, SqliteError, SQLITE_ERROR};
 
 static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 
 pub fn get_tokio() -> &'static Runtime {
     RUNTIME.get_or_init(|| {
-        runtime::Builder::new_current_thread()
+        runtime::Builder::new_multi_thread()
+            .worker_threads(num_cpus::get())
             .enable_all()
             .build()
             .expect("Failed to create Tokio runtime")
@@ -35,25 +36,9 @@ pub fn count_parameters(sql: &str) -> c_int {
     re.find_iter(&sql).count() as c_int
 }
 
-pub fn extract_column_names(sql: &str) -> Vec<String> {
-    let select_start = sql.to_uppercase().find("SELECT");
-    let from_start = sql.to_uppercase().find("FROM");
-
-    if let (Some(start), Some(end)) = (select_start, from_start) {
-        let columns_part = &sql[start + 6..end].trim();
-        columns_part
-            .split(',')
-            .map(|col| col.split("AS").last().unwrap_or(col).trim().to_string())
-            .collect()
-    } else {
-        // Default to unnamed columns if parsing fails
-        vec![]
-    }
-}
-
 pub fn execute_async_task<F, R>(db: *mut SQLite3, task: F) -> c_int
 where
-    F: std::future::Future<Output = Result<R, Box<dyn std::error::Error>>>,
+    F: std::future::Future<Output = Result<R, SqliteError>>,
     R: Into<c_int>,
 {
     let runtime = get_tokio();
@@ -61,7 +46,7 @@ where
     match runtime.block_on(task) {
         Ok(result) => result.into(),
         Err(err) => {
-            push_error(db, (format!("{}", err), SQLITE_ERROR));
+            push_error(db, (format!("{}", err), err.code));
             SQLITE_ERROR
         }
     }

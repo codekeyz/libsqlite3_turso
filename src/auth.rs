@@ -22,7 +22,8 @@ impl DbAuthStrategy for GlobeStrategy {
         Box::pin(async move {
             let globe_auth_api = std::env::var("GLOBE_DS_API")?;
 
-            let request_body = serde_json::json!({ "db_name": db_name });
+            let clean_db_name = db_name.split('.').next().unwrap_or(db_name);
+            let request_body = serde_json::json!({ "db_name": clean_db_name });
 
             let response = client
                 .post(format!("{}/db/auth", globe_auth_api))

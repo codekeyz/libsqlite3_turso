@@ -8,16 +8,15 @@ use std::{
 };
 
 use sqlite::{
-    push_error, reset_txn_on_db, ExecutionState, SQLite3, SQLite3PreparedStmt, Value, SQLITE_BUSY,
-    SQLITE_CANTOPEN, SQLITE_DONE, SQLITE_ERROR, SQLITE_FLOAT, SQLITE_INTEGER, SQLITE_MISUSE,
-    SQLITE_NULL, SQLITE_OK, SQLITE_RANGE, SQLITE_TEXT,
+    push_error, reset_txn_on_db, ExecutionState, SQLite3, SQLite3ExecCallback, SQLite3PreparedStmt,
+    Value, SQLITE_BUSY, SQLITE_CANTOPEN, SQLITE_DONE, SQLITE_ERROR, SQLITE_FLOAT, SQLITE_INTEGER,
+    SQLITE_MISUSE, SQLITE_NULL, SQLITE_OK, SQLITE_RANGE, SQLITE_TEXT,
 };
-use utils::execute_async_task;
 
 use crate::{
     auth::{DbAuthStrategy, GlobeStrategy},
     utils::{
-        count_parameters, extract_column_names, get_tokio, is_aligned, sql_is_begin_transaction,
+        count_parameters, execute_async_task, get_tokio, is_aligned, sql_is_begin_transaction,
         sql_is_commit, sql_is_pragma, sql_is_rollback,
     },
 };
@@ -139,7 +138,6 @@ pub unsafe extern "C" fn sqlite3_prepare_v3(
     };
 
     let param_count = count_parameters(&sql);
-    let column_names = extract_column_names(&sql);
 
     // Mock unparsed portion of SQL
     if !pz_tail.is_null() {
@@ -156,7 +154,7 @@ pub unsafe extern "C" fn sqlite3_prepare_v3(
         execution_state: Mutex::new(ExecutionState::Prepared), // Start in the "Prepared" state
         result_rows: Mutex::new(vec![]), // Initialize an empty result set
         current_row: Mutex::new(None), // No current row initially
-        column_names,
+        column_names: Vec::new(),
     });
     *pp_stmt = Box::into_raw(stmt);
 
@@ -277,21 +275,36 @@ pub unsafe extern "C" fn sqlite3_step(stmt_ptr: *mut SQLite3PreparedStmt) -> c_i
     }
     drop(exec_state);
 
-    let sql = stmt.sql.to_uppercase();
-    if sql.starts_with("SELECT") {
-        return execute_async_task(stmt.db, sqlite::handle_select(stmt));
-    } else if sql_is_begin_transaction(&sql) {
-        return execute_async_task(stmt.db, sqlite::begin_tnx_on_db(stmt.db));
-    } else if sql_is_commit(&sql) {
-        return execute_async_task(stmt.db, sqlite::commit_tnx_on_db(stmt.db));
+    let needs_execution = stmt.result_rows.lock().unwrap().is_empty();
+    if needs_execution {
+        let sql = stmt.sql.to_uppercase();
+        let sql_result_code = {
+            if sql_is_begin_transaction(&sql) {
+                execute_async_task(stmt.db, sqlite::begin_tnx_on_db(stmt.db, &sql))
+            } else if sql_is_commit(&sql) {
+                execute_async_task(stmt.db, sqlite::commit_tnx_on_db(stmt.db, &sql))
+            } else {
+                execute_async_task(stmt.db, sqlite::execute_stmt(stmt))
+            }
+        };
+
+        if sql_result_code != SQLITE_OK {
+            return sql_result_code;
+        }
     }
 
-    execute_async_task(stmt.db, sqlite::execute_statement(stmt))
+    let sql_result_code = sqlite::iterate_rows(stmt);
+    if let Err(error) = sql_result_code {
+        push_error(stmt.db, (error.to_string(), SQLITE_ERROR));
+        return SQLITE_ERROR;
+    }
+
+    sql_result_code.unwrap()
 }
 
 #[no_mangle]
 pub extern "C" fn sqlite3_column_count(stmt: *mut SQLite3PreparedStmt) -> i32 {
-    if stmt.is_null() {
+    if !is_aligned(stmt) {
         return 0;
     }
 
@@ -595,9 +608,9 @@ pub extern "C" fn sqlite3_errstr(errcode: c_int) -> *const c_char {
 pub unsafe extern "C" fn sqlite3_exec(
     db: *mut SQLite3,
     sql: *const c_char,
-    _: Option<extern "C" fn(*mut std::ffi::c_void, i32, *const *const i8, *const *const i8) -> i32>,
-    _: *mut std::ffi::c_void,
-    _: *mut *mut i8,
+    callback: SQLite3ExecCallback, // Callback function
+    arg: *mut c_void,
+    errmsg: *mut *mut c_char,
 ) -> c_int {
     if !is_aligned(db) {
         return SQLITE_CANTOPEN;
@@ -610,11 +623,11 @@ pub unsafe extern "C" fn sqlite3_exec(
     if sql_is_pragma(&sql) {
         return SQLITE_OK;
     } else if sql_is_begin_transaction(&sql) {
-        return execute_async_task(db, sqlite::begin_tnx_on_db(db));
+        return execute_async_task(db, sqlite::begin_tnx_on_db(db, &sql));
     } else if sql_is_rollback(&sql) {
         return reset_txn_on_db(db);
     } else if sql_is_commit(&sql) {
-        return execute_async_task(db, sqlite::commit_tnx_on_db(db));
+        return execute_async_task(db, sqlite::commit_tnx_on_db(db, &sql));
     }
 
     execute_async_task(db, sqlite::handle_execute(db, &sql))
