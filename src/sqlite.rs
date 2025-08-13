@@ -15,6 +15,7 @@ use crate::{
 
 pub const SQLITE_OK: c_int = 0;
 pub const SQLITE_ERROR: c_int = 1;
+pub const SQLITE_INTERNAL: c_int = 2;
 pub const SQLITE_MISUSE: c_int = 21;
 pub const SQLITE_ROW: c_int = 100;
 pub const SQLITE_DONE: c_int = 101;

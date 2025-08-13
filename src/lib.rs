@@ -690,3 +690,40 @@ pub extern "C" fn sqlite3_get_autocommit(db: *mut SQLite3) -> c_int {
         1 // Autocommit mode
     }
 }
+
+#[no_mangle]
+pub extern "C" fn sqlite3_create_function_v2(
+    _db: *mut c_void,
+    _zFunctionName: *const c_char,
+    _nArg: c_int,
+    _eTextRep: c_int,
+    _pApp: *mut c_void,
+    _xFunc: Option<extern "C" fn(*mut c_void, c_int, *mut *mut c_void)>,
+    _xStep: Option<extern "C" fn(*mut c_void, c_int, *mut *mut c_void)>,
+    _xFinal: Option<extern "C" fn(*mut c_void)>,
+    _xDestroy: Option<extern "C" fn(*mut c_void)>,
+) -> c_int {
+    println!(
+        "Not Yet Supported: sqlite3_create_function_v2 : {:?}",
+        unsafe { CStr::from_ptr(_zFunctionName) }
+    );
+    SQLITE_OK
+}
+
+#[no_mangle]
+pub extern "C" fn sqlite3_stmt_isexplain(stmt: *mut SQLite3PreparedStmt) -> c_int {
+    if !is_aligned(stmt) {
+        return SQLITE_OK;
+    }
+
+    let stmt_ref = unsafe { &*stmt };
+    let sql_trimmed = stmt_ref.sql.trim_start().to_uppercase();
+
+    if sql_trimmed.starts_with("EXPLAIN QUERY PLAN") {
+        2 // EXPLAIN QUERY PLAN
+    } else if sql_trimmed.starts_with("EXPLAIN") {
+        1 // EXPLAIN (no QUERY PLAN)
+    } else {
+        SQLITE_OK
+    }
+}
