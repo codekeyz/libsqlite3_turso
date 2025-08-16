@@ -9,7 +9,6 @@ use crate::{
 };
 
 mod http;
-mod response_bus;
 mod wss;
 
 #[derive(Debug, Deserialize, Clone)]

@@ -324,7 +324,7 @@ impl LibsqlInterface for WebSocketStrategy {
 }
 
 #[derive(Clone)]
-pub struct ResponseBus {
+struct ResponseBus {
     map: Arc<Mutex<HashMap<String, oneshot::Sender<Value>>>>,
 }
 
