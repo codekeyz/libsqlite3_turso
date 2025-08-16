@@ -21,7 +21,7 @@ impl HttpStrategy {
 
 impl LibsqlInterface for HttpStrategy {
     async fn get_transaction_baton(&mut self, sql: &str) -> Result<String, SqliteError> {
-        let request = serde_json::json!({
+        let mut request = serde_json::json!({
             "requests": [
                 {
                     "type": "execute",
@@ -31,7 +31,8 @@ impl LibsqlInterface for HttpStrategy {
                 }
             ]
         });
-        let result = self.send(request).await;
+
+        let result = self.send(&mut request).await;
         if let Err(e) = result {
             return Err(SqliteError::new(
                 format!("Failed to get transaction baton: {}", e),
@@ -49,7 +50,7 @@ impl LibsqlInterface for HttpStrategy {
 
     async fn send(
         &mut self,
-        request: serde_json::Value,
+        request: &mut serde_json::Value,
     ) -> Result<RemoteSqliteResponse, SqliteError> {
         const MAX_ATTEMPTS: usize = 5;
         let mut last_error = String::new();
@@ -162,7 +163,7 @@ impl LibsqlInterface for HttpStrategy {
     fn get_json_request(
         &self,
         sql: &str,
-        params: Vec<serde_json::Value>,
+        params: &Vec<serde_json::Value>,
         baton: Option<&String>,
         is_transacting: bool,
     ) -> serde_json::Value {

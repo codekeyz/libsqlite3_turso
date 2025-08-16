@@ -67,7 +67,6 @@ pub unsafe extern "C" fn sqlite3_open_v2(
     let connection = get_tokio().block_on(transport::DatabaseConnection::open(
         db_name,
         Box::new(GlobeStrategy),
-        transport::ActiveStrategy::Websocket,
     ));
     if connection.is_err() {
         return SQLITE_CANTOPEN;

@@ -355,10 +355,21 @@ async fn execute_sql_and_params(
     sql: &str,
     params: Vec<serde_json::Value>,
 ) -> Result<RemoteSqliteResponse, SqliteError> {
-    let result = db
-        .connection
-        .send(db.connection.get_json_request(db, sql, params))
-        .await;
+    if let transport::ActiveStrategy::Websocket = db.connection.strategy {
+        let mut request = db.connection.get_json_request(db, sql, &params);
+        match db.connection.send(&mut request).await {
+            Ok(response) => return Ok(response),
+            Err(_) => {
+                db.connection.strategy = transport::ActiveStrategy::Http;
+                if cfg!(debug_assertions) {
+                    println!("WebSocket failed, retrying with HTTP...");
+                }
+            }
+        }
+    }
+
+    let request = &mut db.connection.get_json_request(db, sql, &params);
+    let result = db.connection.send(request).await;
 
     if let Err(e) = result {
         return Err(SqliteError::new(e.to_string(), Some(SQLITE_ERROR)));

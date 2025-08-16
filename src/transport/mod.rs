@@ -58,7 +58,7 @@ pub trait LibsqlInterface {
     fn get_json_request(
         &self,
         sql: &str,
-        params: Vec<serde_json::Value>,
+        params: &Vec<serde_json::Value>,
         baton: Option<&String>,
         is_transacting: bool,
     ) -> serde_json::Value;
@@ -67,7 +67,7 @@ pub trait LibsqlInterface {
 
     async fn send(
         &mut self,
-        request: serde_json::Value,
+        request: &mut serde_json::Value,
     ) -> Result<RemoteSqliteResponse, SqliteError>;
 }
 
@@ -78,17 +78,13 @@ pub enum ActiveStrategy {
 }
 
 pub struct DatabaseConnection {
-    http: HttpStrategy,
-    websocket: WebSocketStrategy,
+    pub http: HttpStrategy,
+    pub websocket: WebSocketStrategy,
     pub strategy: ActiveStrategy,
 }
 
 impl DatabaseConnection {
-    pub async fn open(
-        db_name: &str,
-        auth: Box<dyn DbAuthStrategy>,
-        strategy: ActiveStrategy,
-    ) -> Result<Self, SqliteError> {
+    pub async fn open(db_name: &str, auth: Box<dyn DbAuthStrategy>) -> Result<Self, SqliteError> {
         let reqwest_client = reqwest::Client::builder()
             .user_agent("libsqlite3_turso/1.0.0")
             .timeout(std::time::Duration::from_secs(30))
@@ -106,21 +102,16 @@ impl DatabaseConnection {
         let http = HttpStrategy::new(reqwest_client, turso_config.clone());
         let mut websocket = WebSocketStrategy::new(turso_config.clone());
 
-        if let ActiveStrategy::Websocket = strategy {
-            websocket.connect().await?;
+        websocket.connect().await?;
 
-            //wait 10 seconds for the server to respond
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-            if cfg!(debug_assertions) {
-                println!("WebSocket connection established for {}", db_name);
-            }
+        if cfg!(debug_assertions) {
+            println!("WebSocket connection established for {}", db_name);
         }
 
         Ok(Self {
             http,
             websocket,
-            strategy,
+            strategy: ActiveStrategy::Websocket,
         })
     }
 
@@ -133,11 +124,11 @@ impl DatabaseConnection {
 
     pub async fn send(
         &mut self,
-        request: serde_json::Value,
+        mut request: &mut serde_json::Value,
     ) -> Result<RemoteSqliteResponse, SqliteError> {
         match self.strategy {
-            ActiveStrategy::Http => self.http.send(request).await,
-            ActiveStrategy::Websocket => self.websocket.send(request).await,
+            ActiveStrategy::Http => self.http.send(&mut request).await,
+            ActiveStrategy::Websocket => self.websocket.send(&mut request).await,
         }
     }
 
@@ -145,7 +136,7 @@ impl DatabaseConnection {
         &self,
         db: &SQLite3,
         sql: &str,
-        params: Vec<serde_json::Value>,
+        params: &Vec<serde_json::Value>,
     ) -> serde_json::Value {
         let baton_str = {
             let baton = db.transaction_baton.lock().unwrap();

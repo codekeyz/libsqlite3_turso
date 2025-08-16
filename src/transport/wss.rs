@@ -233,7 +233,7 @@ impl LibsqlInterface for WebSocketStrategy {
 
     async fn send(
         &mut self,
-        mut request: serde_json::Value,
+        request: &mut serde_json::Value,
     ) -> Result<RemoteSqliteResponse, SqliteError> {
         if let WebSocketConnState::Disconnected = *self.websocket_state.lock().await {
             return Err(SqliteError::new(
@@ -309,7 +309,7 @@ impl LibsqlInterface for WebSocketStrategy {
     fn get_json_request(
         &self,
         sql: &str,
-        params: Vec<serde_json::Value>,
+        params: &Vec<serde_json::Value>,
         baton: Option<&String>,
         is_transacting: bool,
     ) -> serde_json::Value {
