@@ -1,6 +1,6 @@
 use std::{future::Future, pin::Pin};
 
-use crate::utils::TursoConfig;
+use crate::transport::TursoConfig;
 
 pub trait DbAuthStrategy {
     fn resolve<'a>(
