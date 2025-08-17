@@ -22,7 +22,7 @@ This project provides drop-in `libsqlite3.so` support with automatic strategy se
 cargo build --release
 ```
 
-### 1. Place `libsqlite3.so` in your system
+### 2. Place `libsqlite3.so` in your system
 
 This project assumes `libsqlite3.so` is available at runtime.
 
