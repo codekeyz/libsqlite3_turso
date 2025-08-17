@@ -33,15 +33,3 @@ Place it in a standard library path (e.g., `/usr/lib`, or use `/usr/local/lib/`)
 ## 🚀 Usage
 
 Use **any standard SQLite library** in your language/runtime — this project handles the dynamic strategy and connection logic under the hood.
-
-The strategy is selected automatically:
-
-### 🌍 `GlobeStrategy` (used when running in Globe)
-
-- Create database in Globe dashboard.
-- No environment variables are needed.
-- Just open the database using its name:
-
-```rust
-sqlite3.open("my-database")
-```
