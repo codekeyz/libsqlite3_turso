@@ -7,9 +7,7 @@ This project provides drop-in `libsqlite3.so` support with automatic strategy se
 ## ✨ Features
 
 - ✅ Works with **any SQLite client** that uses `libsqlite3.so`
-- 🔁 Automatically picks between strategies:
-  - **`EnvVarStrategy`** — for general use outside Globe
-  - **`GlobeStrategy`** — for auto-authenticated execution inside a Globe edge function
+- 🔁 Supports both `Http` & `Websocket` protocol for LibSQL
 - 🔌 No custom SQLite client logic or HRANA knowledge required
 
 ---
