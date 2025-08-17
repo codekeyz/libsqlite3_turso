@@ -359,10 +359,10 @@ async fn execute_sql_and_params(
         let mut request = db.connection.get_json_request(db, sql, &params);
         match db.connection.send(&mut request).await {
             Ok(response) => return Ok(response),
-            Err(_) => {
+            Err(err) => {
                 db.connection.strategy = transport::ActiveStrategy::Http;
                 if cfg!(debug_assertions) {
-                    println!("WebSocket failed, retrying with HTTP...");
+                    eprintln!("WebSocket failed, retrying with HTTP... {}", err);
                 }
             }
         }

@@ -227,8 +227,24 @@ impl WebSocketStrategy {
 
 impl LibsqlInterface for WebSocketStrategy {
     async fn get_transaction_baton(&mut self, sql: &str) -> Result<String, SqliteError> {
-        // Implementation for WebSocket transport
-        unimplemented!()
+        let (stream_id, _) = self.open_stream().await?;
+        let mut request = serde_json::json!({
+            "type": "execute",
+            "stream_id": stream_id,
+            "stmt": {
+                "sql": sql
+            }
+        });
+
+        let result = self.send(&mut request).await;
+        if let Err(e) = result {
+            return Err(SqliteError::new(
+                format!("Failed to get transaction baton: {}", e),
+                Some(SQLITE_ERROR),
+            ));
+        }
+
+        Ok(stream_id.to_string())
     }
 
     async fn send(
@@ -242,10 +258,17 @@ impl LibsqlInterface for WebSocketStrategy {
             ));
         }
 
-        let (stream_id, bus) = self.open_stream().await?;
-        let request_id = WebSocketStrategy::next_request_id();
-        request["stream_id"] = serde_json::Value::from(stream_id);
+        let bus: ResponseBus;
 
+        if request.get("stream_id").is_none() {
+            let (stream_id, actual_bus) = self.open_stream().await?;
+            request["stream_id"] = serde_json::Value::from(stream_id);
+            bus = actual_bus;
+        } else {
+            bus = self.bus.clone();
+        }
+
+        let request_id = WebSocketStrategy::next_request_id();
         let request = serde_json::json!({
             "type": "request",
             "request_id": request_id,
@@ -310,16 +333,23 @@ impl LibsqlInterface for WebSocketStrategy {
         &self,
         sql: &str,
         params: &Vec<serde_json::Value>,
-        baton: Option<&String>,
+        stream_id: Option<&String>,
         is_transacting: bool,
     ) -> serde_json::Value {
-        serde_json::json!({
+        let mut request = serde_json::json!({
             "type": "execute",
             "stmt": {
                 "sql": sql,
                 "args": params
             }
-        })
+        });
+
+        if is_transacting {
+            let stream_id: i32 = stream_id.and_then(|s| s.parse::<i32>().ok()).unwrap();
+            request["stream_id"] = serde_json::json!(stream_id);
+        }
+
+        request
     }
 }
 
