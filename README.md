@@ -1,0 +1,33 @@
+# libsqlite-turso
+
+A rewrite for `libsqlite3.so` dynamic library that allows any SQLite client to seamlessly connect to [Turso](https://turso.tech/) or LibSQL databases — with zero client-side changes.
+
+This project provides drop-in `libsqlite3.so` support with automatic strategy selection depending on runtime context.
+
+## ✨ Features
+
+- ✅ Works with **any SQLite client** that uses `libsqlite3.so`
+- 🔁 Supports both `Http` & `Websocket` protocol for LibSQL
+- 🔌 No custom SQLite client logic or [Hrana](https://github.com/tursodatabase/libsql/blob/main/docs/HRANA_3_SPEC.md) knowledge required
+
+---
+
+## 🔧 Setup
+
+### 1. Build the custom `libsqlite3.so`
+
+```bash
+cargo build --release
+```
+
+### 2. Place `libsqlite3.so` in your system
+
+This project assumes `libsqlite3.so` is available at runtime.
+
+Place it in a standard library path (e.g., `/usr/lib`, or use `/usr/local/lib/`).
+
+---
+
+## 🚀 Usage
+
+Use **any standard SQLite library** in your language/runtime — this project handles the dynamic strategy and connection logic under the hood.

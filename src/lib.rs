@@ -14,7 +14,7 @@ use sqlite::{
 };
 
 use crate::{
-    auth::{DbAuthStrategy, GlobeStrategy},
+    auth::{DbAuthStrategy, EnvVarStrategy, GlobeStrategy},
     utils::{
         count_parameters, execute_async_task, get_tokio, is_aligned, sql_is_begin_transaction,
         sql_is_commit, sql_is_pragma, sql_is_rollback,
@@ -22,8 +22,8 @@ use crate::{
 };
 
 mod auth;
-mod proxy;
 mod sqlite;
+mod transport;
 mod utils;
 
 #[no_mangle]
@@ -59,25 +59,30 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         return SQLITE_ERROR;
     }
 
-    let filename = CStr::from_ptr(filename).to_str().unwrap();
-    if filename.contains(":memory") {
+    let db_name = CStr::from_ptr(filename).to_str().unwrap();
+    if db_name.contains(":memory") {
         return SQLITE_CANTOPEN;
     }
 
-    let reqwest_client = reqwest::Client::builder()
-        .user_agent("libsqlite3_turso/1.0.0")
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap();
-
-    let auth_strategy = Box::new(GlobeStrategy);
-    let turso_config = get_tokio().block_on(auth_strategy.resolve(filename, &reqwest_client));
-    if turso_config.is_err() {
+    // Check if running in Globe environment
+    let auth_strategy: Box<dyn DbAuthStrategy> = {
+        let is_globe_env = std::env::var("GLOBE")
+            .and_then(|v| Ok(v == "1"))
+            .unwrap_or(false);
+        if is_globe_env {
+            Box::new(GlobeStrategy)
+        } else {
+            Box::new(EnvVarStrategy)
+        }
+    };
+    let connection =
+        get_tokio().block_on(transport::DatabaseConnection::open(db_name, auth_strategy));
+    if connection.is_err() {
         return SQLITE_CANTOPEN;
     }
 
     let mock_db = Box::into_raw(Box::new(SQLite3 {
-        client: reqwest_client,
+        connection: connection.unwrap(),
         error_stack: Mutex::new(vec![]),
         transaction_baton: Mutex::new(None),
         last_insert_rowid: Mutex::new(None),
@@ -85,7 +90,6 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         delete_hook: Mutex::new(None),
         insert_hook: Mutex::new(None),
         update_hook: Mutex::new(None),
-        turso_config: turso_config.unwrap(),
     }));
 
     *db = mock_db;

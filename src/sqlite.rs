@@ -7,15 +7,12 @@ use std::{
 };
 
 use crate::{
-    proxy::{
-        convert_params_to_json, execute_sql_and_params, get_execution_result, get_transaction_baton,
-    },
-    utils::TursoConfig,
+    transport::{self, RemoteSqliteResponse},
+    utils::{convert_params_to_json, get_execution_result},
 };
 
 pub const SQLITE_OK: c_int = 0;
 pub const SQLITE_ERROR: c_int = 1;
-pub const SQLITE_INTERNAL: c_int = 2;
 pub const SQLITE_MISUSE: c_int = 21;
 pub const SQLITE_ROW: c_int = 100;
 pub const SQLITE_DONE: c_int = 101;
@@ -81,15 +78,14 @@ impl fmt::Display for SqliteError {
 
 #[repr(C)]
 pub struct SQLite3 {
-    pub client: reqwest::Client, // HTTP client for making requests
-    pub last_insert_rowid: Mutex<Option<i64>>, // Last inserted row ID
-    pub error_stack: Mutex<Vec<(String, c_int)>>, // Stack to store error messages
-    pub transaction_baton: Mutex<Option<String>>, // Baton for transaction management
-    pub transaction_has_began: Mutex<bool>, // Flag to check if a transaction has started
+    pub connection: transport::DatabaseConnection, // Connection to the database
+    pub last_insert_rowid: Mutex<Option<i64>>,     // Last inserted row ID
+    pub error_stack: Mutex<Vec<(String, c_int)>>,  // Stack to store error messages
+    pub transaction_baton: Mutex<Option<String>>,  // Baton for transaction management
+    pub transaction_has_began: Mutex<bool>,        // Flag to check if a transaction has started
     pub update_hook: Mutex<Option<(SqliteHook, *mut c_void)>>, // Update hook callback
     pub insert_hook: Mutex<Option<(SqliteHook, *mut c_void)>>, // Insert hook callback
     pub delete_hook: Mutex<Option<(SqliteHook, *mut c_void)>>, // Delete hook callback
-    pub turso_config: TursoConfig, // Configuration for Turso
 }
 
 impl SQLite3 {
@@ -282,7 +278,7 @@ pub async fn begin_tnx_on_db(db: *mut SQLite3, sql: &str) -> Result<c_int, Sqlit
         ));
     }
 
-    let baton_value = get_transaction_baton(&db.client, &db.turso_config, &sql).await?;
+    let baton_value = db.connection.get_transaction_baton(&sql).await?;
     db.transaction_baton.lock().unwrap().replace(baton_value);
     *db.transaction_has_began.lock().unwrap() = true;
 
@@ -299,9 +295,7 @@ pub async fn commit_tnx_on_db(db: *mut SQLite3, sql: &str) -> Result<c_int, Sqli
         ));
     }
 
-    let baton = db.transaction_baton.lock().unwrap().clone();
-
-    execute_sql_and_params(db, &sql, vec![], baton.as_ref()).await?;
+    execute_sql_and_params(db, &sql, vec![]).await?;
 
     db.transaction_baton.lock().unwrap().take();
 
@@ -311,14 +305,10 @@ pub async fn commit_tnx_on_db(db: *mut SQLite3, sql: &str) -> Result<c_int, Sqli
 }
 
 pub async fn execute_stmt(stmt: &mut SQLite3PreparedStmt) -> Result<c_int, SqliteError> {
-    let db: &SQLite3 = unsafe { &*stmt.db };
-    let baton_str = {
-        let baton = db.transaction_baton.lock().unwrap();
-        baton.as_ref().map(|s| s.as_str()).map(|s| s.to_owned())
-    };
+    let db: &mut SQLite3 = unsafe { &mut *stmt.db };
 
     let params = convert_params_to_json(&stmt.params);
-    let response = execute_sql_and_params(db, &stmt.sql, params, baton_str.as_ref()).await?;
+    let response = execute_sql_and_params(db, &stmt.sql, params).await?;
     let response = get_execution_result(db, &response)?;
 
     stmt.column_names = response.cols.iter().map(|col| col.name.clone()).collect();
@@ -358,4 +348,32 @@ pub async fn execute_stmt(stmt: &mut SQLite3PreparedStmt) -> Result<c_int, Sqlit
         .collect();
 
     Ok(SQLITE_OK)
+}
+
+async fn execute_sql_and_params(
+    db: &mut SQLite3,
+    sql: &str,
+    params: Vec<serde_json::Value>,
+) -> Result<RemoteSqliteResponse, SqliteError> {
+    if let transport::ActiveStrategy::Websocket = db.connection.strategy {
+        let mut request = db.connection.get_json_request(db, sql, &params);
+        match db.connection.send(&mut request).await {
+            Ok(response) => return Ok(response),
+            Err(err) => {
+                db.connection.strategy = transport::ActiveStrategy::Http;
+                if cfg!(debug_assertions) {
+                    eprintln!("WebSocket failed, retrying with HTTP... {}", err);
+                }
+            }
+        }
+    }
+
+    let request = &mut db.connection.get_json_request(db, sql, &params);
+    let result = db.connection.send(request).await;
+
+    if let Err(e) = result {
+        return Err(SqliteError::new(e.to_string(), Some(SQLITE_ERROR)));
+    }
+
+    Ok(result.unwrap())
 }
