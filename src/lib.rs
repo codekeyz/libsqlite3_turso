@@ -14,7 +14,7 @@ use sqlite::{
 };
 
 use crate::{
-    auth::GlobeStrategy,
+    auth::{DbAuthStrategy, EnvVarStrategy, GlobeStrategy},
     utils::{
         count_parameters, execute_async_task, get_tokio, is_aligned, sql_is_begin_transaction,
         sql_is_commit, sql_is_pragma, sql_is_rollback,
@@ -64,10 +64,19 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         return SQLITE_CANTOPEN;
     }
 
-    let connection = get_tokio().block_on(transport::DatabaseConnection::open(
-        db_name,
-        Box::new(GlobeStrategy),
-    ));
+    // Check if running in Globe environment
+    let auth_strategy: Box<dyn DbAuthStrategy> = {
+        let is_globe_env = std::env::var("GLOBE")
+            .and_then(|v| Ok(v == "1"))
+            .unwrap_or(false);
+        if is_globe_env {
+            Box::new(GlobeStrategy)
+        } else {
+            Box::new(EnvVarStrategy)
+        }
+    };
+    let connection =
+        get_tokio().block_on(transport::DatabaseConnection::open(db_name, auth_strategy));
     if connection.is_err() {
         return SQLITE_CANTOPEN;
     }
