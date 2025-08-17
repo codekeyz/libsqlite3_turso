@@ -78,7 +78,7 @@ impl fmt::Display for SqliteError {
 
 #[repr(C)]
 pub struct SQLite3 {
-    pub connection: transport::DatabaseConnection, // HTTP strategy for requests
+    pub connection: transport::DatabaseConnection, // Connection to the database
     pub last_insert_rowid: Mutex<Option<i64>>,     // Last inserted row ID
     pub error_stack: Mutex<Vec<(String, c_int)>>,  // Stack to store error messages
     pub transaction_baton: Mutex<Option<String>>,  // Baton for transaction management
