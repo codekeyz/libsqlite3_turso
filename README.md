@@ -1,6 +1,6 @@
 # libsqlite-turso
 
-A rewrite for `libsqlite3.so` that allows any SQLite client to seamlessly connect to [Turso](https://turso.tech/) databases — with zero client-side changes.
+A rewrite for `libsqlite3.so` dynamic library that allows any SQLite client to seamlessly connect to [Turso](https://turso.tech/) or LibSQL databases — with zero client-side changes.
 
 This project provides drop-in `libsqlite3.so` support with automatic strategy selection depending on runtime context.
 
