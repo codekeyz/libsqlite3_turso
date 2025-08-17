@@ -8,7 +8,7 @@ This project provides drop-in `libsqlite3.so` support with automatic strategy se
 
 - ✅ Works with **any SQLite client** that uses `libsqlite3.so`
 - 🔁 Supports both `Http` & `Websocket` protocol for LibSQL
-- 🔌 No custom SQLite client logic or HRANA knowledge required
+- 🔌 No custom SQLite client logic or [Hrana](https://github.com/tursodatabase/libsql/blob/main/docs/HRANA_3_SPEC.md) knowledge required
 
 ---
 
