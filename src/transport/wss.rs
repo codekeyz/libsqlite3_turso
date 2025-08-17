@@ -321,8 +321,6 @@ impl LibsqlInterface for WebSocketStrategy {
             });
         }
 
-        // Here you would typically wait for a response and parse it
-        // For now, we return a placeholder response
         Ok(RemoteSqliteResponse {
             baton: None,
             results: vec![],
