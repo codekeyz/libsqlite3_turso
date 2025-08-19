@@ -63,8 +63,10 @@ impl DbAuthStrategy for EnvVarStrategy {
     ) -> Pin<Box<dyn Future<Output = Result<TursoConfig, Box<dyn std::error::Error>>> + Send + 'a>>
     {
         Box::pin(async move {
-            let url = std::env::var("TURSO_DB_URL")?;
-            let token = std::env::var("TURSO_DB_TOKEN")?;
+            let url = std::env::var("TURSO_DB_URL")
+                .map_err(|_| "TURSO_DB_URL environment variable not set")?;
+            let token = std::env::var("TURSO_DB_TOKEN")
+                .map_err(|_| "TURSO_DB_TOKEN environment variable not set")?;
 
             Ok(TursoConfig {
                 db_url: url,

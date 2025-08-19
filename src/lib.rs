@@ -15,6 +15,7 @@ use sqlite::{
 
 use crate::{
     auth::{DbAuthStrategy, EnvVarStrategy, GlobeStrategy},
+    sqlite::get_latest_error,
     utils::{
         count_parameters, execute_async_task, get_tokio, is_aligned, sql_is_begin_transaction,
         sql_is_commit, sql_is_pragma, sql_is_rollback,
@@ -61,7 +62,10 @@ pub unsafe extern "C" fn sqlite3_open_v2(
 
     let db_name = CStr::from_ptr(filename).to_str().unwrap();
     if db_name.contains(":memory") {
-        return SQLITE_CANTOPEN;
+        return push_error((
+            "In-memory databases are not supported".to_string(),
+            SQLITE_CANTOPEN,
+        ));
     }
 
     // Check if running in Globe environment
@@ -77,13 +81,12 @@ pub unsafe extern "C" fn sqlite3_open_v2(
     };
     let connection =
         get_tokio().block_on(transport::DatabaseConnection::open(db_name, auth_strategy));
-    if connection.is_err() {
-        return SQLITE_CANTOPEN;
+    if let Some(error) = connection.as_ref().err() {
+        return push_error((error.to_string(), SQLITE_CANTOPEN));
     }
 
     let mock_db = Box::into_raw(Box::new(SQLite3 {
         connection: connection.unwrap(),
-        error_stack: Mutex::new(vec![]),
         transaction_baton: Mutex::new(None),
         last_insert_rowid: Mutex::new(None),
         transaction_has_began: Mutex::new(false),
@@ -115,21 +118,15 @@ pub unsafe extern "C" fn sqlite3_prepare_v3(
     pp_stmt: *mut *mut SQLite3PreparedStmt, // OUT: Prepared statement handle
     pz_tail: *mut *const c_char,            // OUT: Unprocessed SQL string
 ) -> c_int {
-    if pp_stmt.is_null() {
+    if !is_aligned(_db) {
         return SQLITE_ERROR;
     }
 
-    let db = &mut *_db;
-
     if prep_flag != 0 {
-        push_error(
-            db,
-            (
-                "Persisted prepared statements not supported yet.".to_string(),
-                SQLITE_MISUSE,
-            ),
-        );
-        return SQLITE_MISUSE;
+        return push_error((
+            "Persisted prepared statements not supported yet.".to_string(),
+            SQLITE_MISUSE,
+        ));
     }
 
     let bytes = slice::from_raw_parts(_sql as *const u8, byte_len);
@@ -284,11 +281,11 @@ pub unsafe extern "C" fn sqlite3_step(stmt_ptr: *mut SQLite3PreparedStmt) -> c_i
         let sql = stmt.sql.to_uppercase();
         let sql_result_code = {
             if sql_is_begin_transaction(&sql) {
-                execute_async_task(stmt.db, sqlite::begin_tnx_on_db(stmt.db, &sql))
+                execute_async_task(sqlite::begin_tnx_on_db(stmt.db, &sql))
             } else if sql_is_commit(&sql) {
-                execute_async_task(stmt.db, sqlite::commit_tnx_on_db(stmt.db, &sql))
+                execute_async_task(sqlite::commit_tnx_on_db(stmt.db, &sql))
             } else {
-                execute_async_task(stmt.db, sqlite::execute_stmt(stmt))
+                execute_async_task(sqlite::execute_stmt(stmt))
             }
         };
 
@@ -299,7 +296,7 @@ pub unsafe extern "C" fn sqlite3_step(stmt_ptr: *mut SQLite3PreparedStmt) -> c_i
 
     let sql_result_code = sqlite::iterate_rows(stmt);
     if let Err(error) = sql_result_code {
-        push_error(stmt.db, (error.to_string(), SQLITE_ERROR));
+        push_error((error.to_string(), SQLITE_ERROR));
         return SQLITE_ERROR;
     }
 
@@ -377,37 +374,23 @@ pub unsafe extern "C" fn sqlite3_close_v2(db: *mut SQLite3) -> c_int {
 }
 
 #[no_mangle]
-pub extern "C" fn sqlite3_extended_errcode(db: *mut SQLite3) -> c_int {
-    if !is_aligned(db) {
-        return SQLITE_CANTOPEN;
-    }
-
-    let db = unsafe { &mut *db };
-
-    let error_stack = db.error_stack.lock().unwrap();
-    if !error_stack.is_empty() {
-        return error_stack[0].1;
+pub unsafe extern "C" fn sqlite3_extended_errcode(_: *mut SQLite3) -> c_int {
+    let error_stack = get_latest_error();
+    if let Some((_, code)) = error_stack {
+        return code;
     }
 
     SQLITE_OK
 }
 
 #[no_mangle]
-pub extern "C" fn sqlite3_errmsg(db: *mut SQLite3) -> *const c_char {
-    if !is_aligned(db) {
-        return b"Invalid Database pointer\0".as_ptr() as *const c_char;
-    }
-
-    let db = unsafe { &mut *db };
-
-    if let Some(error_entry) = sqlite::get_latest_error(db) {
-        match CString::new(error_entry.0) {
-            Ok(c_string) => c_string.into_raw(),
-            Err(_) => std::ptr::null(),
+pub unsafe extern "C" fn sqlite3_errmsg(_: *mut SQLite3) -> *const c_char {
+    if let Some(error_entry) = sqlite::get_latest_error() {
+        if let Ok(c_string) = CString::new(error_entry.0) {
+            return c_string.into_raw();
         }
-    } else {
-        b"No error\0".as_ptr() as *const c_char
     }
+    std::ptr::null()
 }
 
 #[no_mangle]
@@ -612,7 +595,7 @@ pub extern "C" fn sqlite3_errstr(errcode: c_int) -> *const c_char {
 pub unsafe extern "C" fn sqlite3_exec(
     db: *mut SQLite3,
     sql: *const c_char,
-    callback: SQLite3ExecCallback, // Callback function
+    callback: SQLite3ExecCallback,
     arg: *mut c_void,
     errmsg: *mut *mut c_char,
 ) -> c_int {
@@ -627,14 +610,14 @@ pub unsafe extern "C" fn sqlite3_exec(
     if sql_is_pragma(&sql) {
         return SQLITE_OK;
     } else if sql_is_begin_transaction(&sql) {
-        return execute_async_task(db, sqlite::begin_tnx_on_db(db, &sql));
+        return execute_async_task(sqlite::begin_tnx_on_db(db, &sql));
     } else if sql_is_rollback(&sql) {
         return reset_txn_on_db(db);
     } else if sql_is_commit(&sql) {
-        return execute_async_task(db, sqlite::commit_tnx_on_db(db, &sql));
+        return execute_async_task(sqlite::commit_tnx_on_db(db, &sql));
     }
 
-    execute_async_task(db, sqlite::handle_execute(db, &sql))
+    execute_async_task(sqlite::handle_execute(db, &sql))
 }
 
 #[no_mangle]
@@ -668,14 +651,12 @@ pub extern "C" fn sqlite3_commit_hook(
 #[no_mangle]
 pub extern "C" fn sqlite3_rollback_hook(
     db: *mut SQLite3,
-    x_callback: Option<unsafe extern "C" fn(*mut c_void) -> c_int>, // int (*xCallback)(void*)
-    p_arg: *mut c_void,                                             // void *pArg
+    x_callback: Option<unsafe extern "C" fn(*mut c_void) -> c_int>,
+    p_arg: *mut c_void,
 ) -> c_int {
     if !is_aligned(db) {
         return SQLITE_CANTOPEN;
     }
-
-    let db = unsafe { &mut *db }; // Safely dereference the raw pointer
 
     SQLITE_OK
 }

@@ -38,7 +38,7 @@ pub fn count_parameters(sql: &str) -> c_int {
     re.find_iter(&sql).count() as c_int
 }
 
-pub fn execute_async_task<F, R>(db: *mut SQLite3, task: F) -> c_int
+pub fn execute_async_task<F, R>(task: F) -> c_int
 where
     F: std::future::Future<Output = Result<R, SqliteError>>,
     R: Into<c_int>,
@@ -48,7 +48,7 @@ where
     match runtime.block_on(task) {
         Ok(result) => result.into(),
         Err(err) => {
-            push_error(db, (format!("{}", err), err.code));
+            unsafe { push_error((format!("{}", err), err.code)) };
             SQLITE_ERROR
         }
     }

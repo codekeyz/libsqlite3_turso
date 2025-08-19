@@ -11,6 +11,8 @@ use crate::{
     utils::{convert_params_to_json, get_execution_result},
 };
 
+use lazy_static::lazy_static;
+
 pub const SQLITE_OK: c_int = 0;
 pub const SQLITE_ERROR: c_int = 1;
 pub const SQLITE_MISUSE: c_int = 21;
@@ -76,11 +78,14 @@ impl fmt::Display for SqliteError {
     }
 }
 
+lazy_static! {
+    pub static ref ERROR_STACK: Mutex<Vec<(String, c_int)>> = Mutex::new(Vec::new());
+}
+
 #[repr(C)]
 pub struct SQLite3 {
     pub connection: transport::DatabaseConnection, // Connection to the database
     pub last_insert_rowid: Mutex<Option<i64>>,     // Last inserted row ID
-    pub error_stack: Mutex<Vec<(String, c_int)>>,  // Stack to store error messages
     pub transaction_baton: Mutex<Option<String>>,  // Baton for transaction management
     pub transaction_has_began: Mutex<bool>,        // Flag to check if a transaction has started
     pub update_hook: Mutex<Option<(SqliteHook, *mut c_void)>>, // Update hook callback
@@ -184,8 +189,15 @@ pub type SQLite3ExecCallback = Option<
     ) -> c_int,
 >;
 
-pub fn get_latest_error(db: &SQLite3) -> Option<(String, c_int)> {
-    if let Ok(stack) = db.error_stack.lock() {
+pub unsafe fn push_error(error: (String, c_int)) -> c_int {
+    let mut stack = ERROR_STACK.lock().unwrap();
+    let code = error.1;
+    stack.push(error);
+    code
+}
+
+pub unsafe fn get_latest_error() -> Option<(String, c_int)> {
+    if let Ok(stack) = ERROR_STACK.lock() {
         stack.last().cloned()
     } else {
         None
@@ -203,14 +215,6 @@ pub fn reset_txn_on_db(db: *mut SQLite3) -> c_int {
     db.transaction_baton.lock().unwrap().take();
 
     SQLITE_OK
-}
-
-pub fn push_error(db: *mut SQLite3, error: (String, c_int)) {
-    let db = unsafe { &mut *db };
-
-    if let Ok(mut stack) = db.error_stack.lock() {
-        stack.push(error);
-    }
 }
 
 pub fn iterate_rows(stmt: &mut SQLite3PreparedStmt) -> Result<c_int, Box<dyn Error>> {
