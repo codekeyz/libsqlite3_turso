@@ -20,14 +20,13 @@ impl DbAuthStrategy for GlobeStrategy {
     ) -> Pin<Box<dyn Future<Output = Result<TursoConfig, Box<dyn std::error::Error>>> + Send + 'a>>
     {
         Box::pin(async move {
-            let globe_auth_api = std::env::var("GLOBE_DS_API")?;
+            let globe_auth_api = std::env::var("GLOBE_DS_API")
+                .map_err(|_| "GLOBE_DS_API environment variable not set")?;
 
             let clean_db_name = db_name.split('.').next().unwrap_or(db_name);
-            let request_body = serde_json::json!({ "db_name": clean_db_name });
 
             let response = client
-                .post(format!("{}/db/auth", globe_auth_api))
-                .body(request_body.to_string())
+                .get(format!("{}/db/{}/get_auth", globe_auth_api, clean_db_name))
                 .send()
                 .await
                 .map_err(|_| "Failed to fetch auth credentials for database")?;
