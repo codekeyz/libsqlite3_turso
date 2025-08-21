@@ -102,16 +102,21 @@ impl DatabaseConnection {
         let http = HttpStrategy::new(reqwest_client, turso_config.clone());
         let mut websocket = WebSocketStrategy::new(turso_config.clone());
 
-        websocket.connect().await?;
-
-        if cfg!(debug_assertions) {
-            println!("WebSocket connection established for {}", db_name);
-        }
+        let connection = websocket.connect().await;
+        let strategy: ActiveStrategy = match connection {
+            Ok(_) => ActiveStrategy::Websocket,
+            Err(err) => {
+                if cfg!(debug_assertions) {
+                    println!("WebSocket connection failed: {}", err);
+                }
+                ActiveStrategy::Http
+            }
+        };
 
         Ok(Self {
             http,
             websocket,
-            strategy: ActiveStrategy::Websocket,
+            strategy,
         })
     }
 
