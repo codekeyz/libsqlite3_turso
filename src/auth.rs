@@ -39,8 +39,8 @@ impl DbAuthStrategy for GlobeStrategy {
                 }
 
                 return Err(format!(
-                    "Failed to authenticate database. Http Status Code: {}",
-                    status_code,
+                    "Failed to authenticate database. Http Status Code: {}, Error: {}",
+                    status_code, error_message
                 )
                 .into());
             }

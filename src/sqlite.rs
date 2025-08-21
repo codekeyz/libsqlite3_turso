@@ -365,9 +365,7 @@ async fn execute_sql_and_params(
             Ok(response) => return Ok(response),
             Err(err) => {
                 db.connection.strategy = transport::ActiveStrategy::Http;
-                if cfg!(debug_assertions) {
-                    eprintln!("WebSocket failed, retrying with HTTP... {}", err);
-                }
+                return Err(err);
             }
         }
     }
