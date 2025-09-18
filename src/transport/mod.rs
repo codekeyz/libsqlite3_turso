@@ -51,6 +51,8 @@ pub struct RemoteRow {
 pub struct QueryResult {
     pub cols: Vec<RemoteCol>,
     pub rows: Vec<Vec<RemoteRow>>,
+    pub rows_read: Option<u64>,
+    pub rows_written: Option<u64>,
     pub last_insert_rowid: Option<String>,
 }
 
