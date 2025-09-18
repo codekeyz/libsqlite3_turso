@@ -89,6 +89,7 @@ pub unsafe extern "C" fn sqlite3_open_v2(
         connection: connection.unwrap(),
         transaction_baton: Mutex::new(None),
         last_insert_rowid: Mutex::new(None),
+        rows_written: Mutex::new(None),
         transaction_has_began: Mutex::new(false),
         delete_hook: Mutex::new(None),
         insert_hook: Mutex::new(None),
@@ -381,6 +382,22 @@ pub unsafe extern "C" fn sqlite3_extended_errcode(_: *mut SQLite3) -> c_int {
     }
 
     SQLITE_OK
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sqlite3_changes(db: *mut SQLite3) -> c_int {
+    if !is_aligned(db) {
+        return SQLITE_OK;
+    }
+    let db = &mut *db;
+
+    if let Ok(rows_written) = db.rows_written.lock() {
+        if rows_written.is_some() {
+            return rows_written.unwrap() as c_int;
+        }
+    }
+
+    0
 }
 
 #[no_mangle]

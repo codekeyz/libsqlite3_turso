@@ -144,5 +144,10 @@ pub fn get_execution_result<'a>(
         *last_insert_rowid_lock = Some(last_insert_rowid.parse::<i64>().unwrap_or(0));
     }
 
+    if let Some(rows_written) = &first_execution_result.rows_written {
+        let mut rows_written_lock = db.rows_written.lock().unwrap();
+        *rows_written_lock = Some(*rows_written);
+    }
+
     Ok(first_execution_result)
 }

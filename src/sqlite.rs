@@ -86,6 +86,7 @@ lazy_static! {
 pub struct SQLite3 {
     pub connection: transport::DatabaseConnection, // Connection to the database
     pub last_insert_rowid: Mutex<Option<i64>>,     // Last inserted row ID
+    pub rows_written: Mutex<Option<u64>>,          // Number of rows written
     pub transaction_baton: Mutex<Option<String>>,  // Baton for transaction management
     pub transaction_has_began: Mutex<bool>,        // Flag to check if a transaction has started
     pub update_hook: Mutex<Option<(SqliteHook, *mut c_void)>>, // Update hook callback
