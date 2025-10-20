@@ -95,7 +95,7 @@ pub fn convert_params_to_json(params: &HashMap<i32, Value>) -> Vec<serde_json::V
 
             Value::Real(f) => serde_json::json!({
                 "type": "float",
-                "value": *f.to_string()
+                "value": f
             }),
             Value::Text(s) => serde_json::json!({
                 "type": "text",

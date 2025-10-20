@@ -218,6 +218,26 @@ pub unsafe extern "C" fn sqlite3_bind_text(
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn sqlite3_bind_double(
+    stmt_ptr: *mut SQLite3PreparedStmt, // Pointer to the prepared statement
+    index: c_int,                       // Index of the parameter to bind
+    value: f64,                         // Double value to bind
+    _: Option<unsafe extern "C" fn(ptr: *mut c_void)>,
+) -> i32 {
+    if stmt_ptr.is_null() {
+        return SQLITE_MISUSE;
+    }
+
+    let stmt = &mut *stmt_ptr;
+    if index <= 0 || index > stmt.param_count {
+        return SQLITE_RANGE;
+    }
+
+    stmt.params.insert(index, Value::Real(value));
+    SQLITE_OK
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn sqlite3_bind_int64(
     stmt_ptr: *mut SQLite3PreparedStmt, // Pointer to the prepared statement
     index: i32,                         // 1-based index of the parameter
@@ -506,6 +526,34 @@ pub extern "C" fn sqlite3_column_text(
 }
 
 #[no_mangle]
+pub extern "C" fn sqlite3_column_double(stmt: *mut SQLite3PreparedStmt, col_index: i32) -> f64 {
+    if stmt.is_null() {
+        return 0.0;
+    }
+
+    let stmt = unsafe { &mut *stmt };
+    let result_rows = stmt.result_rows.lock().unwrap();
+    let current_row = stmt.current_row.lock().unwrap();
+
+    // Check if there's a current row
+    if let Some(row_index) = *current_row {
+        if let Some(value) = result_rows
+            .get(row_index)
+            .and_then(|row| row.get(col_index as usize))
+        {
+            // Match the value and extract it as f64
+            return match value {
+                Value::Real(f) => *f,                // Return the float directly
+                Value::Integer(i) => *i as f64,      // Cast integer to float
+                Value::Text(_) | Value::Null => 0.0, // Non-numeric or NULL
+            };
+        }
+    }
+
+    0.0
+}
+
+#[no_mangle]
 pub extern "C" fn sqlite3_column_int64(stmt: *mut SQLite3PreparedStmt, col_index: i32) -> i64 {
     if stmt.is_null() {
         return 0;
@@ -705,10 +753,12 @@ pub extern "C" fn sqlite3_create_function_v2(
     _xFinal: Option<extern "C" fn(*mut c_void)>,
     _xDestroy: Option<extern "C" fn(*mut c_void)>,
 ) -> c_int {
-    println!(
-        "Not Yet Supported: sqlite3_create_function_v2 : {:?}",
-        unsafe { CStr::from_ptr(_zFunctionName) }
-    );
+    if cfg!(debug_assertions) {
+        eprintln!(
+            "Not Yet Supported: sqlite3_create_function_v2 : {:?}",
+            unsafe { CStr::from_ptr(_zFunctionName) }
+        );
+    }
     SQLITE_OK
 }
 
