@@ -30,28 +30,28 @@ void main() async {
 
   final database = AppDatabase();
 
-  await database.transaction(() async {
-    // Create the table if it doesn't exist
-    final result = await database.into(database.todoItems).insert(
-          TodoItemsCompanion.insert(
-            title: 'todo: setup drift',
-            content: 'We need to set up drift for our SQLite database.',
-          ),
-        );
+  // await database.transaction(() async {
+  //   // Create the table if it doesn't exist
+  //   final result = await database.into(database.todoItems).insert(
+  //         TodoItemsCompanion.insert(
+  //           title: 'todo: setup drift',
+  //           content: 'We need to set up drift for our SQLite database.',
+  //         ),
+  //       );
 
-  await (database
-    .update(database.todoItems)
-    ..where((tbl) => tbl.id.equals(result)))
-    .write(TodoItemsCompanion(content: const Value('Updated content')));
+  // await (database
+  //   .update(database.todoItems)
+  //   ..where((tbl) => tbl.id.equals(result)))
+  //   .write(TodoItemsCompanion(content: const Value('Updated content')));
 
 
-    print('Inserted item with ID: $result');
-  });
+  //   print('Inserted item with ID: $result');
+  // });
 
-  // final allItems = await database.select(database.todoItems).get();
-  // for (final item in allItems) {
-  //   print('Item: ${item.title}, Content: ${item.content}');
-  // }
+  final allItems = await database.select(database.todoItems).get();
+  for (final item in allItems) {
+    print('Item: ${item.title}, Content: ${item.content}');
+  }
 
   // final server = await HttpServer.bind(InternetAddress.anyIPv4, 8081);
 

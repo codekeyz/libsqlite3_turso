@@ -1,4 +1,4 @@
-FROM dart:3.7.2
+FROM dart:3.10.2
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -26,6 +26,15 @@ RUN curl https://sh.rustup.rs -sSf | \
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 WORKDIR /app
+
+COPY pubspec.yaml pubspec.lock ./
+COPY third_party/sqlite3.dart/sqlite3 ./third_party/sqlite3.dart/sqlite3
+
+RUN dart pub get
+
+RUN dart --disable-analytics
+
+RUN dart run build_runner build --delete-conflicting-outputs
 
 ENTRYPOINT [ "/bin/zsh" ]
 CMD ["-l"]
