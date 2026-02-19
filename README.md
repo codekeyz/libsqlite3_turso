@@ -31,3 +31,9 @@ Place it in a standard library path (e.g., `/usr/lib`, or use `/usr/local/lib/`)
 ## 🚀 Usage
 
 Use **any standard SQLite library** in your language/runtime — this project handles the dynamic strategy and connection logic under the hood.
+
+---
+
+## 🧪 How to test
+
+See the dedicated guide: [`README_TESTING.md`](README_TESTING.md).
