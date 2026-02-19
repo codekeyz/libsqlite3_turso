@@ -779,3 +779,31 @@ pub extern "C" fn sqlite3_stmt_isexplain(stmt: *mut SQLite3PreparedStmt) -> c_in
         SQLITE_OK
     }
 }
+
+#[no_mangle]
+pub extern "C" fn sqlite3_compileoption_used(opt_name: *const c_char) -> c_int {
+    if opt_name.is_null() {
+        return 0;
+    }
+    let opt = unsafe { CStr::from_ptr(opt_name) };
+    let opt_str = match opt.to_str() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+    // SQLite C API allows callers to omit the "SQLITE_" prefix
+    let opt_str = opt_str.strip_prefix("SQLITE_").unwrap_or(opt_str);
+
+    match opt_str {
+        // sqlite3_column_table_name is already implemented in this proxy
+        "ENABLE_COLUMN_METADATA" => 1,
+        _ => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn sqlite3_compileoption_get(n: c_int) -> *const c_char {
+    match n {
+        0 => b"ENABLE_COLUMN_METADATA\0".as_ptr() as *const c_char,
+        _ => std::ptr::null(),
+    }
+}
