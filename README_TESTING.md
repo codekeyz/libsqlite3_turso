@@ -28,7 +28,7 @@ docker run --rm -it \
 ## 4. Compile the binary inside the container
 
 ```bash
-cargo build --release
+cargo build
 ```
 
 ## 5. Run the Dart file in `bin/` to test
